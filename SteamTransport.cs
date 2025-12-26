@@ -114,30 +114,21 @@ namespace Crawlspace2MP
             }
         }
         
+        private const uint CRAWLSPACE2_APP_ID = 2258670;
+        
         private uint GetSteamAppId()
         {
-            // Try to read from steam_appid.txt in game folder
+            // Get game root folder (where the .exe is)
+            string gameRoot = System.IO.Path.GetDirectoryName(
+                System.IO.Path.GetDirectoryName(
+                    System.IO.Path.GetDirectoryName(
+                        System.Reflection.Assembly.GetExecutingAssembly().Location)));
+            
+            string appIdPath = System.IO.Path.Combine(gameRoot, "steam_appid.txt");
+            
+            // Try to read existing file
             try
             {
-                string appIdPath = System.IO.Path.Combine(
-                    System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location),
-                    "..", "..", "steam_appid.txt");
-                
-                if (System.IO.File.Exists(appIdPath))
-                {
-                    string content = System.IO.File.ReadAllText(appIdPath).Trim();
-                    if (uint.TryParse(content, out uint id))
-                    {
-                        Plugin.Log.LogInfo($"Found steam_appid.txt with ID: {id}");
-                        return id;
-                    }
-                }
-                
-                // Also check game root
-                appIdPath = System.IO.Path.Combine(
-                    System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location),
-                    "..", "..", "..", "steam_appid.txt");
-                    
                 if (System.IO.File.Exists(appIdPath))
                 {
                     string content = System.IO.File.ReadAllText(appIdPath).Trim();
@@ -150,9 +141,18 @@ namespace Crawlspace2MP
             }
             catch { }
             
-            // Crawlspace 2 Steam App ID
-            Plugin.Log.LogWarning("Could not find steam_appid.txt, using Crawlspace 2 App ID");
-            return 2258670;
+            // Auto-create steam_appid.txt if it doesn't exist
+            try
+            {
+                System.IO.File.WriteAllText(appIdPath, CRAWLSPACE2_APP_ID.ToString());
+                Plugin.Log.LogInfo($"Created steam_appid.txt with App ID: {CRAWLSPACE2_APP_ID}");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"Could not create steam_appid.txt: {ex.Message}");
+            }
+            
+            return CRAWLSPACE2_APP_ID;
         }
 
         public void StartHost(int port = 0)

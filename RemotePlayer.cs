@@ -16,7 +16,6 @@ namespace Crawlspace2MP
         
         // Track if we're using real models or placeholders
         private bool _usingRealHands = false;
-        private bool _usingRealBatteries = false;
         
         // Ghost state
         private bool _isGhost = false;
