@@ -1,0 +1,122 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>Crawlspace2MP</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Game install path for deployment -->
+    <GamePath>C:\Program Files (x86)\Steam\steamapps\common\Crawlspace 2</GamePath>
+  </PropertyGroup>
+
+  <!-- Copy steam_api64.dll to game folder on build -->
+  <Target Name="CopySteamApi" AfterTargets="Build">
+    <Copy SourceFiles="$(NuGetPackageRoot)facepunch.steamworks\2.3.3\content\steam_api64.dll"
+          DestinationFolder="$(GamePath)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(GamePath)')" />
+    <!-- Create steam_appid.txt if it doesn't exist -->
+    <WriteLinesToFile File="$(GamePath)\steam_appid.txt"
+                      Lines="2258670"
+                      Overwrite="true"
+                      Condition="Exists('$(GamePath)') And !Exists('$(GamePath)\steam_appid.txt')" />
+    <!-- Copy mod DLL to plugins folder -->
+    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll"
+          DestinationFolder="$(GamePath)\BepInEx\plugins"
+          SkipUnchangedFiles="false"
+          Condition="Exists('$(GamePath)\BepInEx\plugins')" />
+    <!-- Copy Facepunch.Steamworks to plugins folder -->
+    <Copy SourceFiles="$(OutputPath)Facepunch.Steamworks.Win64.dll"
+          DestinationFolder="$(GamePath)\BepInEx\plugins"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(GamePath)\BepInEx\plugins')" />
+    <Message Text="Deployed mod to game folder" Importance="high" 
+             Condition="Exists('$(GamePath)')" />
+  </Target>
+
+  <ItemGroup>
+    <!-- BepInEx references - copy these from your BepInEx/core folder -->
+    <Reference Include="BepInEx">
+      <HintPath>lib\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>lib\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
+    <!-- Unity references - copy from Crawlspace 2_Data/Managed -->
+    <Reference Include="UnityEngine">
+      <HintPath>lib\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>lib\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>lib\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>lib\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>lib\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.XRModule">
+      <HintPath>lib\UnityEngine.XRModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
+    <!-- Game assembly - copy from Crawlspace 2_Data/Managed -->
+    <Reference Include="Assembly-CSharp">
+      <HintPath>lib\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
+    <!-- New Input System -->
+    <Reference Include="Unity.InputSystem">
+      <HintPath>lib\Unity.InputSystem.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
+    <!-- XR Management for flatscreen mode -->
+    <Reference Include="Unity.XR.Management">
+      <HintPath>lib\Unity.XR.Management.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
+    <!-- Video module for TV sync -->
+    <Reference Include="UnityEngine.VideoModule">
+      <HintPath>lib\UnityEngine.VideoModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
+    <!-- AI module for NavMeshAgent -->
+    <Reference Include="UnityEngine.AIModule">
+      <HintPath>lib\UnityEngine.AIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
+    <!-- Audio module -->
+    <Reference Include="UnityEngine.AudioModule">
+      <HintPath>lib\UnityEngine.AudioModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
+    <!-- UI module for Image component -->
+    <Reference Include="UnityEngine.UI">
+      <HintPath>lib\UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Facepunch.Steamworks for Steam networking -->
+    <PackageReference Include="Facepunch.Steamworks" Version="2.3.3" />
+  </ItemGroup>
+
+</Project>

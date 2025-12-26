@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "I2Fzb5NVeNEwfNjF4QCOb8Nyh3/VL3rX5OA1o5atsArG4RvrqioKpUWxJMBEAswju9wlEJG/JIAoXG9C+aXztA==",
+  "success": true,
+  "projectFilePath": "C:\\Users\\Dillo\\Downloads\\crawlspace2mp\\crawlspace2mp\\Crawlspace2MP\\Crawlspace2MP.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Dillo\\.nuget\\packages\\facepunch.steamworks\\2.3.3\\facepunch.steamworks.2.3.3.nupkg.sha512",
+    "C:\\Users\\Dillo\\.nuget\\packages\\microsoft.netframework.referenceassemblies\\1.0.2\\microsoft.netframework.referenceassemblies.1.0.2.nupkg.sha512",
+    "C:\\Users\\Dillo\\.nuget\\packages\\microsoft.netframework.referenceassemblies.net472\\1.0.2\\microsoft.netframework.referenceassemblies.net472.1.0.2.nupkg.sha512"
+  ],
+  "logs": []
+}

@@ -1,0 +1,11 @@
+C:\Users\MrBub\Downloads\crawlspace2mp\Crawlspace2MP\bin\Debug\net472\Crawlspace2MP.dll
+C:\Users\MrBub\Downloads\crawlspace2mp\Crawlspace2MP\bin\Debug\net472\Crawlspace2MP.pdb
+C:\Users\MrBub\Downloads\crawlspace2mp\Crawlspace2MP\bin\Debug\net472\LiteNetLib.dll
+C:\Users\MrBub\Downloads\crawlspace2mp\Crawlspace2MP\obj\Debug\net472\Crawlspace2MP.csproj.AssemblyReference.cache
+C:\Users\MrBub\Downloads\crawlspace2mp\Crawlspace2MP\obj\Debug\net472\Crawlspace2MP.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\MrBub\Downloads\crawlspace2mp\Crawlspace2MP\obj\Debug\net472\Crawlspace2MP.AssemblyInfoInputs.cache
+C:\Users\MrBub\Downloads\crawlspace2mp\Crawlspace2MP\obj\Debug\net472\Crawlspace2MP.AssemblyInfo.cs
+C:\Users\MrBub\Downloads\crawlspace2mp\Crawlspace2MP\obj\Debug\net472\Crawlspace2MP.csproj.CoreCompileInputs.cache
+C:\Users\MrBub\Downloads\crawlspace2mp\Crawlspace2MP\obj\Debug\net472\Crawlspa.67D2C7D8.Up2Date
+C:\Users\MrBub\Downloads\crawlspace2mp\Crawlspace2MP\obj\Debug\net472\Crawlspace2MP.dll
+C:\Users\MrBub\Downloads\crawlspace2mp\Crawlspace2MP\obj\Debug\net472\Crawlspace2MP.pdb
