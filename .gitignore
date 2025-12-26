@@ -1,0 +1,48 @@
+# Build outputs
+bin/
+obj/
+
+# NuGet
+*.nupkg
+packages/
+.nuget/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.userprefs
+*.sln.docstates
+*.csproj.user
+
+# Rider
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+LogOutput.log
+
+# Unity Library (if any Unity project is added later)
+Library/
+Temp/
+Build/
+
+# Asset bundles (keep the source, not built bundles)
+*.bundle
+
+# Local testing
+local/
+test/
+
+# Game DLLs (users must copy these themselves)
+lib/*.dll
+
+# Keep the lib folder structure
+!lib/.gitkeep
+!lib/README.md
