@@ -178,14 +178,15 @@ namespace Crawlspace2MP
         {
             if (Steam == null || !Steam.IsInLobby) return;
             
-            // Lock lobby when entering a night level, unlock when in Home
-            bool isHomeScene = scene.name.Equals("Home", System.StringComparison.OrdinalIgnoreCase);
+            // Lock lobby when entering a night level, unlock when in Home/Intro
+            bool isLobbyScene = scene.name.Equals("Home", System.StringComparison.OrdinalIgnoreCase) ||
+                                scene.name.IndexOf("Intro", System.StringComparison.OrdinalIgnoreCase) >= 0;
             
-            if (isHomeScene)
+            if (isLobbyScene)
             {
                 Steam.UnlockLobby();
             }
-            else if (scene.name.Contains("Night") || scene.name.Contains("Intro"))
+            else if (scene.name.Contains("Night"))
             {
                 Steam.LockLobby();
             }
@@ -254,9 +255,10 @@ namespace Crawlspace2MP
                 }
             }
             
-            // Show full UI in Home scene or when not connected
-            bool isHomeScene = currentScene.Equals("Home", System.StringComparison.OrdinalIgnoreCase);
-            if (!isHomeScene && IsConnected)
+            // Show full UI in Home/Intro scene or when not connected
+            bool isLobbyScene = currentScene.Equals("Home", System.StringComparison.OrdinalIgnoreCase) ||
+                                currentScene.IndexOf("Intro", System.StringComparison.OrdinalIgnoreCase) >= 0;
+            if (!isLobbyScene && IsConnected)
                 return;
             
             GUI.backgroundColor = new UnityEngine.Color(0.1f, 0.1f, 0.1f, 0.95f);
@@ -267,6 +269,12 @@ namespace Crawlspace2MP
         private void DrawWindow(int windowId)
         {
             GUILayout.BeginVertical();
+            
+            // Check scene state - Home and Intro are both "lobby" areas
+            string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            bool isLobbyScene = currentScene.Equals("Home", System.StringComparison.OrdinalIgnoreCase) ||
+                                currentScene.IndexOf("Intro", System.StringComparison.OrdinalIgnoreCase) >= 0;
+            bool isInGame = IsRunning && IsConnected && !isLobbyScene;
             
             // Show Steam username at top
             if (_steamInitialized)
@@ -279,7 +287,7 @@ namespace Crawlspace2MP
             // Status with color coding
             if (_statusMessage.Contains("joined") || _statusMessage.Contains("Connected") || _statusMessage.Contains("created"))
                 GUI.contentColor = new UnityEngine.Color(0.5f, 1f, 0.5f);
-            else if (_statusMessage.Contains("failed") || _statusMessage.Contains("left") || _statusMessage.Contains("Disconnected") || _statusMessage.Contains("not found"))
+            else if (_statusMessage.Contains("failed") || _statusMessage.Contains("left") || _statusMessage.Contains("Disconnected") || _statusMessage.Contains("not found") || _statusMessage.Contains("Return"))
                 GUI.contentColor = new UnityEngine.Color(1f, 0.5f, 0.5f);
             else if (_statusMessage.Contains("Joining") || _statusMessage.Contains("Creating"))
                 GUI.contentColor = new UnityEngine.Color(1f, 0.9f, 0.5f);
@@ -319,14 +327,46 @@ namespace Crawlspace2MP
             
             GUILayout.Space(10);
             
-            // Host button - show when not running and not joining
+            // === NOT CONNECTED STATE ===
             if (!IsRunning && !IsJoining)
             {
-                if (GUILayout.Button("🎮 Host Game", GUILayout.Height(35)))
-                    StartHosting();
+                if (isLobbyScene)
+                {
+                    // In Home/Intro - show host/join options
+                    if (GUILayout.Button("🎮 Host Game", GUILayout.Height(35)))
+                        StartHosting();
+                    
+                    GUILayout.Space(10);
+                    GUILayout.Label("Join via Lobby ID:");
+                    _lobbyIdInput = GUILayout.TextField(_lobbyIdInput);
+                    
+                    if (GUILayout.Button("🔗 Join Lobby", GUILayout.Height(35)))
+                        JoinSteamLobby();
+                    
+                    GUILayout.Space(5);
+                    GUI.contentColor = new UnityEngine.Color(0.6f, 0.6f, 0.6f);
+                    GUILayout.Label("Or: Right-click friend → Join Game");
+                    GUI.contentColor = UnityEngine.Color.white;
+                }
+                else
+                {
+                    // Not in Home - tell user to go back
+                    GUILayout.Space(5);
+                    GUI.backgroundColor = new UnityEngine.Color(0.4f, 0.3f, 0.1f);
+                    GUILayout.BeginVertical("box");
+                    GUI.contentColor = new UnityEngine.Color(1f, 0.85f, 0.5f);
+                    GUILayout.Label("🏠 Go to Home to play multiplayer");
+                    GUILayout.Space(3);
+                    GUI.contentColor = new UnityEngine.Color(0.8f, 0.8f, 0.8f);
+                    GUILayout.Label("Host and join from the house area,");
+                    GUILayout.Label("then start the night together.");
+                    GUI.contentColor = UnityEngine.Color.white;
+                    GUILayout.EndVertical();
+                    GUI.backgroundColor = new UnityEngine.Color(0.1f, 0.1f, 0.1f, 0.95f);
+                }
             }
             
-            // Show "Joining..." state with cancel option
+            // === JOINING STATE ===
             if (IsJoining)
             {
                 GUILayout.Space(5);
@@ -341,80 +381,75 @@ namespace Crawlspace2MP
                 }
             }
             
-            // Show lobby controls when hosting
+            // === HOSTING/CONNECTED STATE ===
             if (IsHost && Steam.IsInLobby)
             {
                 GUILayout.Space(5);
                 
-                // Invite Friends button (prominent)
-                GUI.backgroundColor = new UnityEngine.Color(0.2f, 0.5f, 0.8f);
-                if (GUILayout.Button("📨 Invite Friends", GUILayout.Height(30)))
+                if (isLobbyScene)
                 {
-                    Steam.InviteFriends();
+                    // In Home/Intro as host - can invite
+                    GUI.backgroundColor = new UnityEngine.Color(0.2f, 0.5f, 0.8f);
+                    if (GUILayout.Button("📨 Invite Friends", GUILayout.Height(30)))
+                    {
+                        Steam.InviteFriends();
+                    }
+                    GUI.backgroundColor = new UnityEngine.Color(0.1f, 0.1f, 0.1f, 0.95f);
+                    
+                    GUILayout.Space(5);
+                    
+                    // Toggle to show/hide lobby code + copy button
+                    GUILayout.BeginHorizontal();
+                    string toggleText = _showLobbyCode ? "Hide Code" : "Show Code";
+                    if (GUILayout.Button(toggleText, GUILayout.Width(80)))
+                    {
+                        _showLobbyCode = !_showLobbyCode;
+                    }
+                    
+                    bool recentlyCopied = (Time.realtimeSinceStartup - _copiedTime) < 2f;
+                    string copyText = recentlyCopied ? "✓ Copied!" : "📋 Copy";
+                    if (GUILayout.Button(copyText, GUILayout.Width(80)))
+                    {
+                        GUIUtility.systemCopyBuffer = _lobbyIdInput;
+                        _copiedTime = Time.realtimeSinceStartup;
+                    }
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+                    
+                    if (_showLobbyCode)
+                    {
+                        GUI.contentColor = new UnityEngine.Color(0.9f, 0.9f, 0.6f);
+                        GUILayout.TextField(_lobbyIdInput);
+                        GUI.contentColor = UnityEngine.Color.white;
+                    }
                 }
-                GUI.backgroundColor = new UnityEngine.Color(0.1f, 0.1f, 0.1f, 0.95f);
-                
-                GUILayout.Space(5);
-                
-                // Toggle to show/hide lobby code + copy button
-                GUILayout.BeginHorizontal();
-                string toggleText = _showLobbyCode ? "Hide Code" : "Show Code";
-                if (GUILayout.Button(toggleText, GUILayout.Width(80)))
+                else
                 {
-                    _showLobbyCode = !_showLobbyCode;
-                }
-                
-                // Copy button - check if recently copied using realtimeSinceStartup
-                bool recentlyCopied = (Time.realtimeSinceStartup - _copiedTime) < 2f;
-                string copyText = recentlyCopied ? "✓ Copied!" : "📋 Copy";
-                if (GUILayout.Button(copyText, GUILayout.Width(80)))
-                {
-                    GUIUtility.systemCopyBuffer = _lobbyIdInput;
-                    _copiedTime = Time.realtimeSinceStartup;
-                }
-                GUILayout.FlexibleSpace();
-                GUILayout.EndHorizontal();
-                
-                // Show lobby ID only if toggled on
-                if (_showLobbyCode)
-                {
-                    GUI.contentColor = new UnityEngine.Color(0.9f, 0.9f, 0.6f);
-                    GUILayout.TextField(_lobbyIdInput);
+                    // In game as host - lobby is locked
+                    GUI.contentColor = new UnityEngine.Color(0.7f, 0.7f, 0.7f);
+                    GUILayout.Label("🔒 Lobby locked during game");
+                    GUILayout.Label("New players can join in Home");
                     GUI.contentColor = UnityEngine.Color.white;
                 }
             }
             
-            GUILayout.Space(10);
-            
-            // Join section - show when not running and not joining
-            if (!IsRunning && !IsJoining)
-            {
-                GUILayout.Label("Join via Lobby ID:");
-                _lobbyIdInput = GUILayout.TextField(_lobbyIdInput);
-                
-                if (GUILayout.Button("🔗 Join Lobby", GUILayout.Height(35)))
-                    JoinSteamLobby();
-                
-                GUILayout.Space(5);
-                GUI.contentColor = new UnityEngine.Color(0.6f, 0.6f, 0.6f);
-                GUILayout.Label("Or: Right-click friend → Join Game");
-                GUI.contentColor = UnityEngine.Color.white;
-            }
-            
-            // Disconnect button - show when running (but not when just joining)
+            // === DISCONNECT & VOICE ===
             if (IsRunning && !IsJoining)
             {
                 GUILayout.Space(10);
                 
-                // Voice chat toggle
-                GUILayout.BeginHorizontal();
+                // Voice chat toggle - use button style for better visibility
                 bool voiceEnabled = VoiceChat?.Enabled ?? false;
-                bool newVoiceEnabled = GUILayout.Toggle(voiceEnabled, "🎤 Voice Chat");
-                if (VoiceChat != null && newVoiceEnabled != voiceEnabled)
+                string voiceText = voiceEnabled ? "🎤 Voice: ON" : "🎤 Voice: OFF";
+                GUI.backgroundColor = voiceEnabled ? new UnityEngine.Color(0.2f, 0.6f, 0.2f) : new UnityEngine.Color(0.4f, 0.4f, 0.4f);
+                if (GUILayout.Button(voiceText, GUILayout.Height(28)))
                 {
-                    VoiceChat.Enabled = newVoiceEnabled;
+                    if (VoiceChat != null)
+                    {
+                        VoiceChat.Enabled = !voiceEnabled;
+                    }
                 }
-                GUILayout.EndHorizontal();
+                GUI.backgroundColor = new UnityEngine.Color(0.1f, 0.1f, 0.1f, 0.95f);
                 
                 GUILayout.Space(5);
                 GUI.backgroundColor = new UnityEngine.Color(0.6f, 0.2f, 0.2f);
@@ -435,6 +470,16 @@ namespace Crawlspace2MP
         
         private void JoinSteamLobby()
         {
+            // Only allow joining in Home/Intro scene
+            string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            bool isLobbyScene = currentScene.Equals("Home", System.StringComparison.OrdinalIgnoreCase) ||
+                                currentScene.IndexOf("Intro", System.StringComparison.OrdinalIgnoreCase) >= 0;
+            if (!isLobbyScene)
+            {
+                _statusMessage = "Return to Home to join!";
+                return;
+            }
+            
             if (string.IsNullOrEmpty(_lobbyIdInput))
             {
                 _statusMessage = "Enter a lobby ID first";
@@ -454,6 +499,16 @@ namespace Crawlspace2MP
 
         private void StartHosting()
         {
+            // Only allow hosting in Home/Intro scene
+            string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            bool isLobbyScene = currentScene.Equals("Home", System.StringComparison.OrdinalIgnoreCase) ||
+                                currentScene.IndexOf("Intro", System.StringComparison.OrdinalIgnoreCase) >= 0;
+            if (!isLobbyScene)
+            {
+                _statusMessage = "Return to Home to host!";
+                return;
+            }
+            
             if (!_steamInitialized)
             {
                 _statusMessage = "Steam not initialized!";

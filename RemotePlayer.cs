@@ -545,7 +545,6 @@ namespace Crawlspace2MP
             }
             RightBattery.SetActive(rightWasActive);
             
-            _usingRealBatteries = true;
             Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Battery visuals upgraded to real model (2.5x scale)");
         }
 
