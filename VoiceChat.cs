@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using Steamworks;
 using UnityEngine;
 
@@ -9,53 +8,53 @@ namespace Crawlspace2MP
     /// <summary>
     /// Steam Voice chat with proximity-based 3D audio
     /// Voice comes from the remote player's position in the world
+    /// 
+    /// Key fixes from research:
+    /// - Proper sample rate handling (Steam decompresses to OptimalSampleRate, Unity plays at outputSampleRate)
+    /// - Fixed ring buffer with proper read/write tracking
+    /// - Jitter buffer to handle network variance
+    /// - Proper audio thread synchronization
     /// </summary>
     public class VoiceChat
     {
-        // Voice packet type (high number to avoid collision with game packets)
         public const byte PACKET_VOICE = 200;
         
         // Settings
         public bool Enabled { get; set; } = true;
-        public bool PushToTalk { get; set; } = false;  // If false, always transmit
-        public float MaxDistance { get; set; } = 30f;  // Max distance to hear voice
-        public float MinDistance { get; set; } = 2f;   // Distance at which voice is full volume
+        public bool PushToTalk { get; set; } = false;
+        public float MaxDistance { get; set; } = 30f;
+        public float MinDistance { get; set; } = 2f;
         
         // State
         private bool _isRecording = false;
         private SteamTransport _steam;
         private Dictionary<int, VoicePlayer> _voicePlayers = new Dictionary<int, VoicePlayer>();
-        private byte[] _voiceBuffer = new byte[1024 * 20];  // 20KB buffer for compressed voice
         
-        // Audio settings (Steam voice is 11025 Hz mono by default, but we request optimal)
-        private int _optimalSampleRate;
+        // Steam voice sample rate (set after decompression)
+        private int _steamSampleRate = 0;
         
         private PacketWriter _writer = new PacketWriter(1024 * 24);
         
         public void Initialize(SteamTransport steam)
         {
             _steam = steam;
-            
-            // Don't get sample rate yet - Steam might not be initialized
-            // We'll get it lazily when we first need it
-            _optimalSampleRate = 0;
-            
-            Plugin.Log.LogInfo("Voice chat created (will initialize when Steam is ready)");
+            Plugin.Log.LogInfo("[Voice] Voice chat initialized");
         }
         
-        private void EnsureInitialized()
+        private void EnsureSteamReady()
         {
-            if (_optimalSampleRate == 0 && SteamClient.IsValid)
+            if (_steamSampleRate == 0 && SteamClient.IsValid)
             {
                 try
                 {
-                    _optimalSampleRate = (int)SteamUser.OptimalSampleRate;
-                    if (_optimalSampleRate == 0) _optimalSampleRate = 24000;  // Fallback
-                    Plugin.Log.LogInfo($"Voice chat initialized. Sample rate: {_optimalSampleRate}");
+                    _steamSampleRate = (int)SteamUser.OptimalSampleRate;
+                    if (_steamSampleRate == 0) _steamSampleRate = 24000;
+                    Plugin.Log.LogInfo($"[Voice] Steam sample rate: {_steamSampleRate}, Unity sample rate: {AudioSettings.outputSampleRate}");
                 }
-                catch
+                catch (Exception ex)
                 {
-                    _optimalSampleRate = 24000;  // Fallback on error
+                    Plugin.Log.LogError($"[Voice] Failed to get sample rate: {ex.Message}");
+                    _steamSampleRate = 24000;
                 }
             }
         }
@@ -64,104 +63,96 @@ namespace Crawlspace2MP
         {
             if (!Enabled || _steam == null || !_steam.IsConnected) return;
             
-            // Lazy initialization when Steam is ready
-            EnsureInitialized();
-            if (_optimalSampleRate == 0) return;  // Still not ready
+            EnsureSteamReady();
+            if (_steamSampleRate == 0) return;
             
-            // Handle recording
             UpdateRecording();
-            
-            // Update voice player positions
             UpdateVoicePlayerPositions();
         }
         
         private void UpdateRecording()
         {
-            bool shouldRecord = !PushToTalk;  // Always record if not push-to-talk
+            bool shouldRecord = !PushToTalk;
             
-            // TODO: Add push-to-talk key check here if PushToTalk is true
-            // For now, always transmit when enabled
-            
+            // Start/stop recording
             if (shouldRecord && !_isRecording)
             {
                 SteamUser.VoiceRecord = true;
                 _isRecording = true;
+                Plugin.Log.LogInfo("[Voice] Started recording");
             }
             else if (!shouldRecord && _isRecording)
             {
                 SteamUser.VoiceRecord = false;
                 _isRecording = false;
+                Plugin.Log.LogInfo("[Voice] Stopped recording");
             }
             
-            // Check for available voice data
-            if (_isRecording)
+            // Read and send voice data
+            if (_isRecording && SteamUser.HasVoiceData)
             {
-                // Read voice data using Facepunch API
-                byte[] voiceData = SteamUser.ReadVoiceDataBytes();
-                
-                if (voiceData != null && voiceData.Length > 0)
+                byte[] compressedData = SteamUser.ReadVoiceDataBytes();
+                if (compressedData != null && compressedData.Length > 0)
                 {
-                    SendVoiceData(voiceData, voiceData.Length);
+                    SendVoiceData(compressedData);
                 }
             }
         }
         
-        private void SendVoiceData(byte[] data, int length)
+        private void SendVoiceData(byte[] compressedData)
         {
             if (_steam == null || !_steam.IsConnected) return;
             
             _writer.Reset();
             _writer.Put(PACKET_VOICE);
-            _writer.Put(length);
-            
-            // Write raw bytes
-            for (int i = 0; i < length; i++)
+            _writer.Put(compressedData.Length);
+            for (int i = 0; i < compressedData.Length; i++)
             {
-                _writer.Put(data[i]);
+                _writer.Put(compressedData[i]);
             }
             
-            // Send unreliable for lower latency (voice can tolerate some loss)
+            // Unreliable for lower latency
             _steam.SendToAll(_writer.GetBytes(), false);
         }
         
-        /// <summary>
-        /// Called when voice data is received from a peer
-        /// </summary>
         public void OnVoiceDataReceived(int peerId, PacketReader reader)
         {
             if (!Enabled) return;
             
-            int compressedLength = reader.GetInt();
-            if (compressedLength <= 0 || compressedLength > _voiceBuffer.Length) return;
+            EnsureSteamReady();
             
-            // Read compressed data
-            for (int i = 0; i < compressedLength; i++)
+            int compressedLength = reader.GetInt();
+            if (compressedLength <= 0 || compressedLength > 20000)
             {
-                _voiceBuffer[i] = reader.GetByte();
+                return;
             }
             
-            // Create a byte array of the exact size
             byte[] compressedData = new byte[compressedLength];
-            Array.Copy(_voiceBuffer, compressedData, compressedLength);
+            for (int i = 0; i < compressedLength; i++)
+            {
+                compressedData[i] = reader.GetByte();
+            }
             
-            // Decompress using MemoryStream
+            // Decompress the voice data
             using (var outputStream = new System.IO.MemoryStream())
             {
                 int bytesWritten = SteamUser.DecompressVoice(compressedData, outputStream);
                 
                 if (bytesWritten > 0)
                 {
-                    byte[] decompressedData = outputStream.ToArray();
+                    byte[] pcmData = outputStream.ToArray();
                     
-                    // Get or create voice player for this peer
+                    // Get or create voice player
                     if (!_voicePlayers.TryGetValue(peerId, out var voicePlayer))
                     {
                         voicePlayer = CreateVoicePlayer(peerId);
                         _voicePlayers[peerId] = voicePlayer;
                     }
                     
-                    // Queue the audio data
-                    voicePlayer.QueueAudio(decompressedData, decompressedData.Length, _optimalSampleRate);
+                    if (voicePlayer != null)
+                    {
+                        voicePlayer.QueueAudio(pcmData, _steamSampleRate);
+                    }
                 }
             }
         }
@@ -169,31 +160,48 @@ namespace Crawlspace2MP
         private VoicePlayer CreateVoicePlayer(int peerId)
         {
             var go = new GameObject($"VoicePlayer_{peerId}");
+            UnityEngine.Object.DontDestroyOnLoad(go);
+            
             var voicePlayer = go.AddComponent<VoicePlayer>();
             voicePlayer.PeerId = peerId;
             voicePlayer.MinDistance = MinDistance;
             voicePlayer.MaxDistance = MaxDistance;
             
-            Plugin.Log.LogInfo($"Created voice player for peer {peerId}");
+            Plugin.Log.LogInfo($"[Voice] Created voice player for peer {peerId}");
             return voicePlayer;
         }
         
         private void UpdateVoicePlayerPositions()
         {
-            // Update voice player positions to match remote player positions
             var playerSync = MPManager.Instance?.PlayerSync;
             if (playerSync == null) return;
+            
+            List<int> toRemove = null;
             
             foreach (var kvp in _voicePlayers)
             {
                 int peerId = kvp.Key;
                 var voicePlayer = kvp.Value;
                 
-                // Get remote player position
+                if (voicePlayer == null || voicePlayer.gameObject == null)
+                {
+                    if (toRemove == null) toRemove = new List<int>();
+                    toRemove.Add(peerId);
+                    continue;
+                }
+                
                 Vector3? remotePos = playerSync.GetRemotePlayerPosition(peerId);
                 if (remotePos.HasValue)
                 {
                     voicePlayer.transform.position = remotePos.Value;
+                }
+            }
+            
+            if (toRemove != null)
+            {
+                foreach (int peerId in toRemove)
+                {
+                    _voicePlayers.Remove(peerId);
                 }
             }
         }
@@ -212,14 +220,12 @@ namespace Crawlspace2MP
         
         public void Cleanup()
         {
-            // Stop recording
             if (_isRecording)
             {
                 SteamUser.VoiceRecord = false;
                 _isRecording = false;
             }
             
-            // Destroy all voice players
             foreach (var voicePlayer in _voicePlayers.Values)
             {
                 if (voicePlayer != null && voicePlayer.gameObject != null)
@@ -230,9 +236,10 @@ namespace Crawlspace2MP
             _voicePlayers.Clear();
         }
     }
-    
+
     /// <summary>
-    /// Component that plays voice audio at a 3D position
+    /// Plays voice audio at a 3D position with proper sample rate conversion
+    /// and jitter buffering to handle network variance
     /// </summary>
     public class VoicePlayer : MonoBehaviour
     {
@@ -241,82 +248,184 @@ namespace Crawlspace2MP
         public float MaxDistance { get; set; } = 30f;
         
         private AudioSource _audioSource;
-        private AudioClip _streamingClip;
-        private float[] _audioBuffer;
-        private int _writePosition = 0;
-        private int _sampleRate = 24000;
-        private const int BUFFER_SECONDS = 2;  // 2 second circular buffer
+        
+        // Ring buffer for audio samples (stores floats ready for playback)
+        private float[] _ringBuffer;
+        private int _writePos = 0;
+        private int _readPos = 0;
+        private int _samplesAvailable = 0;
+        private readonly object _bufferLock = new object();
+        
+        // Buffer size: 2 seconds at Unity's sample rate
+        private int _bufferSize;
+        
+        // Sample rate conversion
+        private int _inputSampleRate = 24000;
+        private int _outputSampleRate;
+        private float _resampleRatio;
+        
+        // Jitter buffer: don't start playing until we have enough data
+        private const float JITTER_BUFFER_MS = 100f; // 100ms jitter buffer
+        private int _jitterBufferSamples;
+        private bool _isPlaying = false;
+        
+        // Resampling state (for linear interpolation)
+        private float _resamplePos = 0f;
         
         private void Awake()
         {
+            _outputSampleRate = AudioSettings.outputSampleRate;
+            _bufferSize = _outputSampleRate * 2; // 2 seconds
+            _ringBuffer = new float[_bufferSize];
+            _jitterBufferSamples = (int)(_outputSampleRate * JITTER_BUFFER_MS / 1000f);
+            
             // Create audio source for 3D positional audio
             _audioSource = gameObject.AddComponent<AudioSource>();
-            _audioSource.spatialBlend = 1f;  // Full 3D
+            _audioSource.spatialBlend = 1f;
             _audioSource.rolloffMode = AudioRolloffMode.Linear;
             _audioSource.minDistance = MinDistance;
             _audioSource.maxDistance = MaxDistance;
             _audioSource.loop = true;
             _audioSource.playOnAwake = false;
             _audioSource.volume = 1f;
-            _audioSource.dopplerLevel = 0f;  // Disable doppler for voice
+            _audioSource.dopplerLevel = 0f;
+            _audioSource.priority = 0; // Highest priority for voice
+            
+            // Create streaming audio clip at Unity's output sample rate
+            var clip = AudioClip.Create(
+                $"VoiceStream_{PeerId}",
+                _outputSampleRate, // 1 second of samples
+                1, // Mono
+                _outputSampleRate,
+                true, // Streaming
+                OnAudioRead
+            );
+            
+            _audioSource.clip = clip;
+            _audioSource.Play();
+            
+            Plugin.Log.LogInfo($"[VoicePlayer {PeerId}] Created with output rate {_outputSampleRate}, jitter buffer {_jitterBufferSamples} samples");
         }
         
-        public void QueueAudio(byte[] pcmData, int length, int sampleRate)
+        /// <summary>
+        /// Queue PCM audio data from Steam Voice (16-bit signed, mono)
+        /// </summary>
+        public void QueueAudio(byte[] pcmData, int sampleRate)
         {
-            _sampleRate = sampleRate;
+            if (pcmData == null || pcmData.Length < 2) return;
             
-            // Initialize buffer and clip if needed
-            if (_audioBuffer == null || _streamingClip == null || _streamingClip.frequency != sampleRate)
+            _inputSampleRate = sampleRate;
+            _resampleRatio = (float)_inputSampleRate / _outputSampleRate;
+            
+            int inputSamples = pcmData.Length / 2;
+            
+            // Convert 16-bit PCM to float and resample to output rate
+            lock (_bufferLock)
             {
-                InitializeAudioBuffer(sampleRate);
+                for (int i = 0; i < inputSamples; i++)
+                {
+                    // Convert 16-bit signed PCM to float [-1, 1]
+                    short sample = (short)(pcmData[i * 2] | (pcmData[i * 2 + 1] << 8));
+                    float floatSample = sample / 32768f;
+                    
+                    // Simple nearest-neighbor resampling for now
+                    // (Linear interpolation happens in OnAudioRead)
+                    _ringBuffer[_writePos] = floatSample;
+                    _writePos = (_writePos + 1) % _bufferSize;
+                    
+                    if (_samplesAvailable < _bufferSize)
+                        _samplesAvailable++;
+                }
             }
-            
-            // Convert bytes to float samples (16-bit PCM)
-            int sampleCount = length / 2;
-            for (int i = 0; i < sampleCount; i++)
+        }
+        
+        /// <summary>
+        /// Called by Unity's audio thread to fill the output buffer
+        /// </summary>
+        private void OnAudioRead(float[] data)
+        {
+            lock (_bufferLock)
             {
-                short sample = (short)(pcmData[i * 2] | (pcmData[i * 2 + 1] << 8));
-                float normalizedSample = sample / 32768f;
+                // Check if we should start playing (jitter buffer filled)
+                if (!_isPlaying)
+                {
+                    if (_samplesAvailable >= _jitterBufferSamples)
+                    {
+                        _isPlaying = true;
+                    }
+                    else
+                    {
+                        // Fill with silence while buffering
+                        Array.Clear(data, 0, data.Length);
+                        return;
+                    }
+                }
                 
-                _audioBuffer[_writePosition] = normalizedSample;
-                _writePosition = (_writePosition + 1) % _audioBuffer.Length;
+                // Check for buffer underrun
+                if (_samplesAvailable < data.Length * _resampleRatio)
+                {
+                    // Underrun - output silence and reset
+                    Array.Clear(data, 0, data.Length);
+                    _isPlaying = false;
+                    return;
+                }
+                
+                // Read samples with resampling
+                for (int i = 0; i < data.Length; i++)
+                {
+                    if (_samplesAvailable > 1)
+                    {
+                        // Linear interpolation between samples
+                        int idx0 = _readPos;
+                        int idx1 = (_readPos + 1) % _bufferSize;
+                        float frac = _resamplePos - (int)_resamplePos;
+                        
+                        float sample0 = _ringBuffer[idx0];
+                        float sample1 = _ringBuffer[idx1];
+                        data[i] = sample0 + (sample1 - sample0) * frac;
+                        
+                        // Advance read position by resample ratio
+                        _resamplePos += _resampleRatio;
+                        
+                        // Consume whole samples
+                        while (_resamplePos >= 1f)
+                        {
+                            _resamplePos -= 1f;
+                            _readPos = (_readPos + 1) % _bufferSize;
+                            _samplesAvailable--;
+                            if (_samplesAvailable <= 0)
+                            {
+                                _samplesAvailable = 0;
+                                break;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        data[i] = 0f;
+                    }
+                }
             }
-            
-            // Update the clip data
-            _streamingClip.SetData(_audioBuffer, 0);
-            
-            // Start playing if not already
-            if (!_audioSource.isPlaying)
-            {
-                _audioSource.Play();
-            }
-        }
-        
-        private void InitializeAudioBuffer(int sampleRate)
-        {
-            int bufferSize = sampleRate * BUFFER_SECONDS;
-            _audioBuffer = new float[bufferSize];
-            
-            // Create streaming audio clip
-            _streamingClip = AudioClip.Create("VoiceStream", bufferSize, 1, sampleRate, false);
-            _audioSource.clip = _streamingClip;
-            _writePosition = 0;
-            
-            Plugin.Log.LogInfo($"Voice buffer initialized: {sampleRate}Hz, {bufferSize} samples");
         }
         
         private void Update()
         {
-            // Update 3D audio settings
-            _audioSource.minDistance = MinDistance;
-            _audioSource.maxDistance = MaxDistance;
+            if (_audioSource != null)
+            {
+                _audioSource.minDistance = MinDistance;
+                _audioSource.maxDistance = MaxDistance;
+            }
         }
         
         private void OnDestroy()
         {
-            if (_streamingClip != null)
+            if (_audioSource != null)
             {
-                Destroy(_streamingClip);
+                _audioSource.Stop();
+                if (_audioSource.clip != null)
+                {
+                    Destroy(_audioSource.clip);
+                }
             }
         }
     }

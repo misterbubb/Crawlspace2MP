@@ -9,6 +9,25 @@
     <GamePath>C:\Program Files (x86)\Steam\steamapps\common\Crawlspace 2</GamePath>
   </PropertyGroup>
 
+  <!-- Exclude the decompiled game code - it's just for reference -->
+  <ItemGroup>
+    <Compile Remove="Assembly-CSharp\**" />
+  </ItemGroup>
+
+  <!-- Debug configuration -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <Optimize>false</Optimize>
+    <DebugType>full</DebugType>
+  </PropertyGroup>
+
+  <!-- Release configuration - minimal logging -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DefineConstants>RELEASE</DefineConstants>
+    <Optimize>true</Optimize>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
   <!-- Copy steam_api64.dll to game folder on build -->
   <Target Name="CopySteamApi" AfterTargets="Build">
     <Copy SourceFiles="$(NuGetPackageRoot)facepunch.steamworks\2.3.3\content\steam_api64.dll"
@@ -95,6 +114,12 @@
       <Private>false</Private>
     </Reference>
     
+    <!-- Image conversion for spectate JPEG encoding -->
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>lib\UnityEngine.ImageConversionModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
     <!-- AI module for NavMeshAgent -->
     <Reference Include="UnityEngine.AIModule">
       <HintPath>lib\UnityEngine.AIModule.dll</HintPath>
@@ -110,6 +135,12 @@
     <!-- UI module for Image component -->
     <Reference Include="UnityEngine.UI">
       <HintPath>lib\UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
+    <!-- AssetBundle module for custom models -->
+    <Reference Include="UnityEngine.AssetBundleModule">
+      <HintPath>lib\UnityEngine.AssetBundleModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

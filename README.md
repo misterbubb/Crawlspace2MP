@@ -7,10 +7,21 @@ A co-op multiplayer mod for [Crawlspace 2](https://store.steampowered.com/app/22
 - **Steam Lobby System** - Easy matchmaking via Steam friends or lobby codes
 - **Full Player Sync** - See your partner's position, head, and hand movements
 - **Proximity Voice Chat** - Built-in 3D positional voice (hear them from their location)
-- **Monster Sync** - Monsters target both players, host controls AI
+- **Monster Sync** - Coordinated monster behavior across players
 - **Puzzle Sync** - Progress syncs between players
 - **Ghost System** - If you die, become a ghost and watch your partner
 - **Streamer-Friendly** - Hide UI with Insert key, lobby codes hidden by default
+
+## Monster Behavior in Co-op
+
+Different monsters have different sync strategies:
+
+| Monster | Behavior |
+|---------|----------|
+| **Smile, Jeff, Sparky** | Triggers at same time for all players, but each player has their OWN monster chasing THEM. Each player must defend themselves. |
+| **Henry, Harold** | Fully synced - host controls position, same monster for everyone |
+| **Clown** | Fully synced - which clown is active, attack state. Only kills players in the main room. |
+| **Paintings** | Fully synced - which paintings are scary, timer, entity spawns. Only kills players in the main room. |
 
 ## Installation
 
@@ -36,6 +47,7 @@ Note: `steam_appid.txt` is auto-generated on first run.
    - Click "Invite Friends" to send Steam invites
    - Share the lobby code (click "Show Code" then "Copy")
    - Friend can right-click you in Steam and click "Join Game"
+   - Use the Friends List in the UI to see friends playing and join directly
 
 ### Controls
 - **Insert** - Toggle UI visibility (for recording/streaming)
@@ -50,36 +62,15 @@ Note: `steam_appid.txt` is auto-generated on first run.
 ### Setup
 1. Clone the repo
 2. Copy required DLLs from your game installation to `lib/`:
-   - From `Crawlspace 2_Data/Managed/`: Unity DLLs, `Assembly-CSharp.dll`
+   - From `VRFighter_Data/Managed/`: Unity DLLs, `Assembly-CSharp.dll`
    - From `BepInEx/core/`: `BepInEx.dll`, `0Harmony.dll`
-3. Build: `dotnet build`
+3. Build: `dotnet build --configuration Release`
 
 The mod auto-deploys to your game folder on build (configure path in `.csproj`).
-
-## Project Structure
-
-```
-├── Plugin.cs           # Main entry point, UI, Harmony patches
-├── SteamTransport.cs   # Steam lobby & P2P networking
-├── PlayerSync.cs       # Game state synchronization
-├── RemotePlayer.cs     # Visual representation of other players
-├── VoiceChat.cs        # Steam Voice proximity chat
-├── INetworkTransport.cs # Packet reader/writer utilities
-└── lib/                # Game & Unity DLLs (not in repo)
-```
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
 MIT License - see [LICENSE](LICENSE)
-
-## Credits
-
-- Built with [BepInEx](https://github.com/BepInEx/BepInEx) and [Harmony](https://github.com/pardeike/Harmony)
-- Steam networking via [Facepunch.Steamworks](https://github.com/Facepunch/Facepunch.Steamworks)
 
 ## Disclaimer
 

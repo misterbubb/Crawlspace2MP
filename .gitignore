@@ -46,3 +46,6 @@ lib/*.dll
 # Keep the lib folder structure
 !lib/.gitkeep
 !lib/README.md
+
+# Decompiled game code (reference only, not part of mod)
+Assembly-CSharp/

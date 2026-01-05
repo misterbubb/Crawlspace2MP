@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Crawlspace2MP")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ee220dcddb224dce3161852dd8f1c47a27b39a69")]
 [assembly: System.Reflection.AssemblyProductAttribute("Crawlspace2MP")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Crawlspace2MP")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
