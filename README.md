@@ -31,7 +31,7 @@ Different monsters have different sync strategies:
 
 ### Steps
 1. Install BepInEx to your Crawlspace 2 folder
-2. Download the latest release from [Releases](https://github.com/misterbubb/Crawlspace2MP/releases)
+2. Download the latest release from [NexusMods](https://www.nexusmods.com/crawlspace2/mods/1)
 3. Copy files to your game folder:
    - `Crawlspace2MP.dll` → `BepInEx/plugins/`
    - `Facepunch.Steamworks.Win64.dll` → `BepInEx/plugins/`
