@@ -23,7 +23,7 @@ This mod is in active development. Core gameplay is functional but you may run i
 ## How to Play
 
 1. Install [BepInEx](https://thunderstore.io/c/crawlspace-2/p/BepInEx/BepInExPack/) to your Crawlspace 2 folder
-2. Drop the mod files into `BepInEx/plugins/Crawlspace2MP/`
+2. Drop the mod files into `BepInEx/plugins/Crawlspace2MP/` and `BepInEx/patchers/Crawlspace2MP/`
 3. Launch through Steam
 4. Host a game or join a friend
 
