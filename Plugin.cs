@@ -29,6 +29,9 @@ namespace Crawlspace2MP
             Log = Logger;
             Log.LogInfo($"Crawlspace 2 Multiplayer v{PluginInfo.PLUGIN_VERSION} loading...");
             
+            // CRITICAL: Validate reflection before doing anything else
+            ValidateReflection();
+            
             LoadCustomAssets();
             
             var harmony = new Harmony(PluginInfo.PLUGIN_GUID);
@@ -40,6 +43,95 @@ namespace Crawlspace2MP
             manager.hideFlags = HideFlags.HideAndDontSave;
             
             Log.LogInfo("Multiplayer mod loaded!");
+        }
+        
+        private void ValidateReflection()
+        {
+            var failures = new List<string>();
+            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            
+            // Enemy AI fields
+            if (typeof(henryBrain).GetField("resetSwitch", flags) == null)
+                failures.Add("henryBrain.resetSwitch");
+            if (typeof(henryBrain).GetField("chaseSwitch", flags) == null)
+                failures.Add("henryBrain.chaseSwitch");
+            if (typeof(sparkyBrain).GetField("currentState", flags) == null)
+                failures.Add("sparkyBrain.currentState");
+            if (typeof(jeffBrain).GetField("currentState", flags) == null)
+                failures.Add("jeffBrain.currentState");
+            if (typeof(jeffBrain).GetField("totalFlashes", flags) == null)
+                failures.Add("jeffBrain.totalFlashes");
+            if (typeof(SmileBrain).GetField("isChasing", flags) == null)
+                failures.Add("SmileBrain.isChasing");
+            if (typeof(SmileBrain).GetField("chaseTime", flags) == null)
+                failures.Add("SmileBrain.chaseTime");
+            if (typeof(clownRandom).GetField("clownAttackingSwitch", flags) == null)
+                failures.Add("clownRandom.clownAttackingSwitch");
+            if (typeof(clownRandom).GetField("clownKillTimer", flags) == null)
+                failures.Add("clownRandom.clownKillTimer");
+            
+            // Puzzle fields
+            if (typeof(PuzzleController).GetField("puzzleHasCompleted", flags) == null)
+                failures.Add("PuzzleController.puzzleHasCompleted");
+            if (typeof(PuzzleController).GetField("puzzlePresetID", flags) == null)
+                failures.Add("PuzzleController.puzzlePresetID");
+            if (typeof(PuzzleController).GetField("timer2", flags) == null)
+                failures.Add("PuzzleController.timer2");
+            if (typeof(PuzzleController).GetField("timer", flags) == null)
+                failures.Add("PuzzleController.timer");
+            if (typeof(PuzzleController).GetField("handColorID", flags) == null)
+                failures.Add("PuzzleController.handColorID");
+            if (typeof(PuzzleController).GetField("originCubeID", flags) == null)
+                failures.Add("PuzzleController.originCubeID");
+            
+            // Painting fields
+            if (typeof(paintingControl).GetField("boolpaintingTall1", flags) == null)
+                failures.Add("paintingControl.boolpaintingTall1");
+            if (typeof(paintingControl).GetField("boolpaintingTall2", flags) == null)
+                failures.Add("paintingControl.boolpaintingTall2");
+            if (typeof(paintingControl).GetField("boolpaintingTall3", flags) == null)
+                failures.Add("paintingControl.boolpaintingTall3");
+            if (typeof(paintingControl).GetField("boolpaintingSquare1", flags) == null)
+                failures.Add("paintingControl.boolpaintingSquare1");
+            if (typeof(paintingControl).GetField("boolpaintingSquare2", flags) == null)
+                failures.Add("paintingControl.boolpaintingSquare2");
+            if (typeof(paintingControl).GetField("boolpaintingSquare3", flags) == null)
+                failures.Add("paintingControl.boolpaintingSquare3");
+            
+            // Public fields that should exist
+            if (typeof(PuzzleBlock).GetField("blockIDValue") == null)
+                failures.Add("PuzzleBlock.blockIDValue");
+            if (typeof(BackpackControl).GetField("batteryLocationID") == null)
+                failures.Add("BackpackControl.batteryLocationID (static)");
+            if (typeof(BackpackControl).GetField("batteryCharge") == null)
+                failures.Add("BackpackControl.batteryCharge (static)");
+            if (typeof(PuzzleMaster).GetField("totalCompletedPuzzles") == null)
+                failures.Add("PuzzleMaster.totalCompletedPuzzles (static)");
+            if (typeof(earMaster).GetField("isCoveringEars") == null)
+                failures.Add("earMaster.isCoveringEars (static)");
+            
+            // Minimap fields (ghost minimap)
+            if (typeof(MinimapControl).GetField("timer", flags) == null)
+                failures.Add("MinimapControl.timer");
+            if (typeof(MinimapControl).GetField("haroldTimer", flags) == null)
+                failures.Add("MinimapControl.haroldTimer");
+            
+            if (failures.Count > 0)
+            {
+                Log.LogError($"╔═══════════════════════════════════════════════════════════════╗");
+                Log.LogError($"║ CRITICAL: Reflection validation failed for {failures.Count,2} field(s)          ║");
+                Log.LogError($"╠═══════════════════════════════════════════════════════════════╣");
+                foreach (var f in failures)
+                    Log.LogError($"║   ✗ {f,-57} ║");
+                Log.LogError($"╠═══════════════════════════════════════════════════════════════╣");
+                Log.LogError($"║ The game may have updated. Multiplayer features WILL break.  ║");
+                Log.LogError($"║ Please report this to the mod developer.                      ║");
+                Log.LogError($"╚═══════════════════════════════════════════════════════════════╝");
+            }
+            else
+            {
+                Log.LogInfo("✓ Reflection validation passed - all fields found");
+            }
         }
         
         private void LoadCustomAssets()
@@ -58,26 +150,33 @@ namespace Crawlspace2MP
                 var helmet = bundle.LoadAsset<GameObject>("assets/sm_kaska_lp.fbx");
                 var visor = bundle.LoadAsset<GameObject>("assets/vr.dae");
                 
-                if (helmet != null)
+                if (helmet != null && visor != null)
                 {
+                    // Both assets loaded successfully - create combined prefab
                     HelmetPrefab = helmet;
-                    Log.LogInfo("Loaded helmet: SM_Kaska_LP");
-                    
-                    if (visor != null)
-                    {
-                        var visorInstance = Instantiate(visor);
-                        visorInstance.transform.SetParent(helmet.transform, false);
-                        // Position from Unity: (0, -0.11, 0.211)
-                        visorInstance.transform.localPosition = new Vector3(0f, -0.11f, 0.211f);
-                        visorInstance.transform.localRotation = Quaternion.identity;
-                        visorInstance.name = "VR_Visor";
-                        Log.LogInfo("Loaded and attached visor: VR");
-                    }
+                    var visorInstance = Instantiate(visor);
+                    visorInstance.transform.SetParent(helmet.transform, false);
+                    visorInstance.transform.localPosition = new Vector3(0f, -0.11f, 0.211f);
+                    visorInstance.transform.localRotation = Quaternion.identity;
+                    visorInstance.name = "VR_Visor";
+                    Log.LogInfo("✓ Loaded helmet with visor (SM_Kaska_LP + VR)");
+                }
+                else if (helmet != null)
+                {
+                    // Only helmet loaded
+                    HelmetPrefab = helmet;
+                    Log.LogWarning("Loaded helmet only (visor missing from asset bundle)");
                 }
                 else if (visor != null)
                 {
+                    // Only visor loaded
                     HelmetPrefab = visor;
-                    Log.LogInfo("Loaded visor only: VR");
+                    Log.LogWarning("Loaded visor only (helmet missing from asset bundle)");
+                }
+                else
+                {
+                    // Neither loaded
+                    Log.LogError("Failed to load helmet or visor from asset bundle - remote players will use fallback visuals");
                 }
             }
             catch (System.Exception ex)
@@ -93,7 +192,7 @@ namespace Crawlspace2MP
         
         public PlayerSync PlayerSync { get; private set; }
         public SteamTransport Steam { get; private set; }
-        public VoiceChat VoiceChat { get; private set; }
+        public VoiceChat VoiceChat { get; private set; } // Disabled - experimental, will be replaced
         public SpectateSystem Spectate { get; private set; }
         
         // State shortcuts
@@ -106,7 +205,6 @@ namespace Crawlspace2MP
         private string _statusMessage = "Initializing Steam...";
         private string _connectedPlayerName = "";
         private Rect _windowRect = new Rect(10, 10, 320, 480);
-        private float _lastLog = 0;
         private bool _steamInitialized = false;
         private float _copiedTime = -10f;  // Time when copy was clicked (-10 so it starts as "Copy")
         private bool _uiHidden = false;  // Toggle with Insert key for streamers
@@ -115,6 +213,25 @@ namespace Crawlspace2MP
         private Vector2 _friendsScrollPos = Vector2.zero;  // Scroll position for friends list
         private float _lastFriendsRefresh = 0f;  // Last time friends list was refreshed
         private List<SteamTransport.FriendGameInfo> _cachedFriends = new List<SteamTransport.FriendGameInfo>();
+        
+        // ===== Trailer staging tools (F1/F2/F3) =====
+#if DEBUG
+        private GameObject _stagedHenry = null;
+        private GameObject _stagedSparky = null;
+        private Vector3 _sparkySpawnPos;
+        private Vector3 _sparkyTargetPos;
+        private bool _sparkyLunging = false;
+        private float _sparkyLungeT = 0f;
+        private const float SPARKY_LUNGE_DURATION = 0.4f;
+        private const float SPARKY_SPAWN_DISTANCE = 0.9144f; // 3 feet in meters
+        
+        // ===== Debug: F4 disables all entities, all vents need repair =====
+        public static bool DebugEntitiesDisabled { get; private set; } = false;
+        
+        // ===== Actor recording system for trailer creation =====
+        public ActorRecorder ActorRecorder { get; private set; } = new ActorRecorder();
+        private Vector2 _actorScrollPos = Vector2.zero;
+#endif
 
         private void Awake()
         {
@@ -126,9 +243,9 @@ namespace Crawlspace2MP
             PlayerSync = new PlayerSync();
             PlayerSync.Initialize(Steam);
             
-            // Create voice chat
-            VoiceChat = new VoiceChat();
-            VoiceChat.Initialize(Steam);
+            // Voice chat disabled for now - experimental and buggy
+            // VoiceChat = new VoiceChat();
+            // VoiceChat.Initialize(Steam);
             
             // Create spectate system
             Spectate = new SpectateSystem();
@@ -237,6 +354,19 @@ namespace Crawlspace2MP
         {
             if (Steam == null || !Steam.IsInLobby) return;
             
+            // Clean up actors on scene change (their GameObjects get destroyed anyway)
+#if DEBUG
+            ActorRecorder?.RemoveAllActors();
+            if (ActorRecorder != null && ActorRecorder.IsRecording)
+                ActorRecorder.StopRecording();
+            
+            // Reset debug mode on scene change
+            DebugEntitiesDisabled = false;
+            _stagedHenry = null;
+            _stagedSparky = null;
+            _sparkyLunging = false;
+#endif
+            
             // Lock lobby when entering a night level, unlock when in Home/Intro
             bool isLobbyScene = scene.name.Equals("Home", System.StringComparison.OrdinalIgnoreCase) ||
                                 scene.name.IndexOf("Intro", System.StringComparison.OrdinalIgnoreCase) >= 0;
@@ -253,29 +383,527 @@ namespace Crawlspace2MP
 
         private void Update()
         {
-            // Log every 10 seconds
-            if (Time.time - _lastLog > 10f)
-            {
-                _lastLog = Time.time;
-                string scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-                Plugin.Log.LogInfo($"[MPManager] Scene={scene}, Running={IsRunning}, Connected={IsConnected}");
-            }
-            
             // Insert key toggles UI visibility (for streamers/recording)
+            // Check both new and old Input System for desktop compatibility
             var keyboard = Keyboard.current;
-            if (keyboard != null && keyboard.insertKey.wasPressedThisFrame)
+            bool insertPressed = keyboard != null && keyboard.insertKey.wasPressedThisFrame;
+            if (!insertPressed)
+            {
+                try { insertPressed = Input.GetKeyDown(KeyCode.Insert); } catch { }
+            }
+            if (insertPressed)
             {
                 _uiHidden = !_uiHidden;
-                Plugin.Log.LogInfo($"UI {(_uiHidden ? "hidden" : "visible")} (Insert key)");
             }
+            
+            // ===== Trailer staging hotkeys =====
+#if DEBUG
+            if (keyboard != null)
+            {
+                // F1 — Spawn/move Henry at player head position (frozen, harmless)
+                if (keyboard.f1Key.wasPressedThisFrame)
+                {
+                    SpawnStagedHenry();
+                }
+                
+                // F2 — Spawn/move Sparky 3ft in front of player (frozen, harmless)
+                if (keyboard.f2Key.wasPressedThisFrame)
+                {
+                    SpawnStagedSparky();
+                }
+                
+                // F3 — Sparky lunges forward 3ft toward player, then resets
+                if (keyboard.f3Key.wasPressedThisFrame && _stagedSparky != null && !_sparkyLunging)
+                {
+                    _sparkyLunging = true;
+                    _sparkyLungeT = 0f;
+                }
+                
+                // F4 — Toggle debug mode: disable all entities + all 9 vents need repair
+                if (keyboard.f4Key.wasPressedThisFrame)
+                {
+                    DebugEntitiesDisabled = !DebugEntitiesDisabled;
+                    Plugin.Log.LogInfo($"[Debug] Entities disabled: {DebugEntitiesDisabled}");
+                    
+                    if (DebugEntitiesDisabled)
+                    {
+                        DisableAllEntities();
+                        ForceAllPuzzlesActive();
+                    }
+                    else
+                    {
+                        EnableAllEntities();
+                        // Stop recording if active
+                        if (ActorRecorder.IsRecording)
+                            ActorRecorder.StopRecording();
+                    }
+                }
+                
+                // F5 — Play all actors
+                if (keyboard.f5Key.wasPressedThisFrame && ActorRecorder.Actors.Count > 0)
+                {
+                    foreach (var actor in ActorRecorder.Actors)
+                    {
+                        actor.IsPlaying = true;
+                        actor.CurrentFrame = 0;
+                        actor.FrameTimer = 0f;
+                    }
+                    Plugin.Log.LogInfo($"[Actor] Playing all {ActorRecorder.Actors.Count} actors");
+                }
+                
+                // Animate Sparky lunge
+                if (_sparkyLunging && _stagedSparky != null)
+                {
+                    _sparkyLungeT += Time.deltaTime / SPARKY_LUNGE_DURATION;
+                    if (_sparkyLungeT >= 1f)
+                    {
+                        // Lunge complete — reset to spawn position
+                        _stagedSparky.transform.position = _sparkySpawnPos;
+                        _sparkyLunging = false;
+                    }
+                    else
+                    {
+                        // Lerp from spawn to target
+                        _stagedSparky.transform.position = Vector3.Lerp(_sparkySpawnPos, _sparkyTargetPos, _sparkyLungeT);
+                    }
+                }
+            }
+#endif
             
             // Poll Steam events
             Steam?.Update();
             PlayerSync?.Update();
-            VoiceChat?.Update();
+            // VoiceChat?.Update(); // Disabled
             Spectate?.Update();
+            
+            // Actor recorder — capture frames and update playback
+#if DEBUG
+            if (ActorRecorder.IsRecording)
+            {
+                ActorRecorder.CaptureFrame();
+            }
+            ActorRecorder.Update();
+#endif
+        }
+        
+#if DEBUG
+        private void SpawnStagedHenry()
+        {
+            var henry = Object.FindObjectOfType<henryBrain>(true);
+            if (henry == null)
+            {
+                Plugin.Log.LogWarning("[Trailer] No Henry found in scene");
+                return;
+            }
+            
+            // Make sure the GameObject is active (debug mode may have hidden it)
+            henry.gameObject.SetActive(true);
+            
+            // Disable AI completely
+            henry.enabled = false;
+            var agent = henry.GetComponent<UnityEngine.AI.NavMeshAgent>();
+            if (agent != null) agent.enabled = false;
+            
+            // Move to player head position
+            Camera cam = Camera.main;
+            if (cam != null)
+            {
+                henry.transform.position = cam.transform.position;
+            }
+            
+            // Force Henry visible — clear resetSwitch so setimage() won't hide him,
+            // and directly set the material
+            var resetField = typeof(henryBrain).GetField("resetSwitch", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (resetField != null) resetField.SetValue(henry, false);
+            if (henry.sparkyJS != null && henry.sp1 != null)
+            {
+                henry.sparkyJS.material = henry.sp1;
+            }
+            
+            _stagedHenry = henry.gameObject;
+            Plugin.Log.LogInfo("[Trailer] Henry staged at player position");
+        }
+        
+        private void SpawnStagedSparky()
+        {
+            var sparky = Object.FindObjectOfType<sparkyBrain>(true);
+            if (sparky == null)
+            {
+                Plugin.Log.LogWarning("[Trailer] No Sparky found in scene");
+                return;
+            }
+            
+            // Make sure the GameObject is active (debug mode may have hidden it)
+            sparky.gameObject.SetActive(true);
+            
+            // Disable AI completely
+            sparky.enabled = false;
+            var agent = sparky.GetComponent<UnityEngine.AI.NavMeshAgent>();
+            if (agent != null) agent.enabled = false;
+            
+            // Get player head position and forward direction
+            Camera cam = Camera.main;
+            if (cam == null) return;
+            
+            Vector3 playerPos = cam.transform.position;
+            Vector3 forward = cam.transform.forward;
+            forward.y = 0; // Keep on same height plane
+            forward.Normalize();
+            
+            // Spawn 3ft in front of player
+            _sparkySpawnPos = playerPos + forward * SPARKY_SPAWN_DISTANCE;
+            _sparkySpawnPos.y = sparky.transform.position.y; // Keep original Y (floor level)
+            _sparkyTargetPos = playerPos;
+            _sparkyTargetPos.y = sparky.transform.position.y;
+            
+            sparky.transform.position = _sparkySpawnPos;
+            
+            // Face toward the player
+            Vector3 lookDir = playerPos - _sparkySpawnPos;
+            lookDir.y = 0;
+            if (lookDir.sqrMagnitude > 0.001f)
+            {
+                sparky.transform.rotation = Quaternion.LookRotation(lookDir);
+            }
+            
+            // Force Sparky visible — set currentState=2 so setimage() shows him,
+            // and directly set the material
+            var stateField = typeof(sparkyBrain).GetField("currentState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (stateField != null) stateField.SetValue(sparky, 2);
+            if (sparky.sparkyJS != null && sparky.sp1 != null)
+            {
+                sparky.sparkyJS.material = sparky.sp1;
+            }
+            
+            _stagedSparky = sparky.gameObject;
+            _sparkyLunging = false;
+            Plugin.Log.LogInfo("[Trailer] Sparky staged 3ft in front of player");
+        }
+        
+        private void DisableAllEntities()
+        {
+            // Disable monster AI and movement
+            // Use includeInactive=true so we can find entities that were already hidden
+            var sparky = Object.FindObjectOfType<sparkyBrain>(true);
+            if (sparky != null)
+            {
+                sparky.enabled = false;
+                var agent = sparky.GetComponent<UnityEngine.AI.NavMeshAgent>();
+                if (agent != null) agent.enabled = false;
+                // Hide unless staged
+                if (_stagedSparky == null) sparky.gameObject.SetActive(false);
+            }
+            
+            var jeff = Object.FindObjectOfType<jeffBrain>(true);
+            if (jeff != null)
+            {
+                jeff.enabled = false;
+                var agent = jeff.GetComponent<UnityEngine.AI.NavMeshAgent>();
+                if (agent != null) agent.enabled = false;
+                jeff.gameObject.SetActive(false);
+            }
+            
+            var henry = Object.FindObjectOfType<henryBrain>(true);
+            if (henry != null)
+            {
+                henry.enabled = false;
+                var agent = henry.GetComponent<UnityEngine.AI.NavMeshAgent>();
+                if (agent != null) agent.enabled = false;
+                // Hide unless staged
+                if (_stagedHenry == null) henry.gameObject.SetActive(false);
+            }
+            
+            var harold = Object.FindObjectOfType<mapEnBrain>(true);
+            if (harold != null)
+            {
+                harold.enabled = false;
+                var agent = harold.GetComponent<UnityEngine.AI.NavMeshAgent>();
+                if (agent != null) agent.enabled = false;
+                harold.gameObject.SetActive(false);
+            }
+            
+            var smile = Object.FindObjectOfType<SmileBrain>(true);
+            if (smile != null)
+            {
+                smile.enabled = false;
+                var agent = smile.GetComponent<UnityEngine.AI.NavMeshAgent>();
+                if (agent != null) agent.enabled = false;
+                smile.gameObject.SetActive(false);
+            }
+            
+            // Disable all clown instances
+            foreach (var clown in Object.FindObjectsOfType<clownRandom>(true))
+                clown.gameObject.SetActive(false);
+            
+            // Disable painting entity spawns (prevent painting kills)
+            var painting = Object.FindObjectOfType<paintingControl>(true);
+            if (painting != null)
+            {
+                var timerField = typeof(paintingControl).GetField("deathTimerMax", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (timerField != null) timerField.SetValue(painting, 999999);
+            }
+            
+            Plugin.Log.LogInfo("[Debug] All entities disabled");
+        }
+        
+        private void EnableAllEntities()
+        {
+            // Re-enable all monster GameObjects and AI
+            var sparky = Object.FindObjectOfType<sparkyBrain>(true);
+            if (sparky != null)
+            {
+                sparky.gameObject.SetActive(true);
+                sparky.enabled = true;
+                var agent = sparky.GetComponent<UnityEngine.AI.NavMeshAgent>();
+                if (agent != null) agent.enabled = true;
+            }
+            
+            var jeff = Object.FindObjectOfType<jeffBrain>(true);
+            if (jeff != null)
+            {
+                jeff.gameObject.SetActive(true);
+                jeff.enabled = true;
+                var agent = jeff.GetComponent<UnityEngine.AI.NavMeshAgent>();
+                if (agent != null) agent.enabled = true;
+            }
+            
+            var henry = Object.FindObjectOfType<henryBrain>(true);
+            if (henry != null)
+            {
+                henry.gameObject.SetActive(true);
+                henry.enabled = true;
+                var agent = henry.GetComponent<UnityEngine.AI.NavMeshAgent>();
+                if (agent != null) agent.enabled = true;
+            }
+            
+            var harold = Object.FindObjectOfType<mapEnBrain>(true);
+            if (harold != null)
+            {
+                harold.gameObject.SetActive(true);
+                harold.enabled = true;
+                var agent = harold.GetComponent<UnityEngine.AI.NavMeshAgent>();
+                if (agent != null) agent.enabled = true;
+            }
+            
+            var smile = Object.FindObjectOfType<SmileBrain>(true);
+            if (smile != null)
+            {
+                smile.gameObject.SetActive(true);
+                smile.enabled = true;
+                var agent = smile.GetComponent<UnityEngine.AI.NavMeshAgent>();
+                if (agent != null) agent.enabled = true;
+            }
+            
+            foreach (var clown in Object.FindObjectsOfType<clownRandom>(true))
+                clown.gameObject.SetActive(true);
+            
+            // Clear staged references since we're re-enabling AI
+            _stagedHenry = null;
+            _stagedSparky = null;
+            
+            Plugin.Log.LogInfo("[Debug] All entities re-enabled");
+        }
+        
+        private void ForceAllPuzzlesActive()
+        {
+            var pm = Object.FindObjectOfType<PuzzleMaster>();
+            if (pm == null)
+            {
+                Plugin.Log.LogWarning("[Debug] PuzzleMaster not found — not in a Night level?");
+                return;
+            }
+            
+            var pmType = typeof(PuzzleMaster);
+            var pcType = typeof(PuzzleController);
+            string[] psFields = { "ps1", "ps2", "ps3", "ps4", "ps5", "ps6", "ps7", "ps8", "ps9" };
+            PuzzleController[] controllers = {
+                pm.pCon1, pm.pCon2, pm.pCon3,
+                pm.pCon4, pm.pCon5, pm.pCon6,
+                pm.pCon7, pm.pCon8, pm.pCon9
+            };
+            
+            int alreadyActive = 0;
+            for (int i = 0; i < 9; i++)
+            {
+                var psField = pmType.GetField(psFields[i], System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                bool isActive = (bool)psField.GetValue(pm);
+                
+                if (!isActive && controllers[i] != null)
+                {
+                    // Activate this puzzle — call thisFan(1) which sets a random preset and hides the map indicator
+                    psField.SetValue(pm, true);
+                    
+                    // Check if it was marked as completed by enableRest (thisFan(2))
+                    var completedField = pcType.GetField("puzzleHasCompleted", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    bool wasCompleted = (bool)completedField.GetValue(controllers[i]);
+                    
+                    if (wasCompleted)
+                    {
+                        // Undo the enableRest completion — make it a real puzzle
+                        completedField.SetValue(controllers[i], false);
+                        controllers[i].fanspin.isOn = false;
+                        controllers[i].thisMapIndicator?.SetActive(false);
+                        controllers[i].setPuzzlePresetID(); // Give it a random preset
+                    }
+                }
+                else if (isActive)
+                {
+                    alreadyActive++;
+                }
+            }
+            
+            // Set required puzzles to 9
+            PuzzleMaster.requiredPuzzles = 9;
+            PuzzleMaster.totalCompletedPuzzles = 0;
+            
+            Plugin.Log.LogInfo($"[Debug] Forced all 9 puzzles active (were {alreadyActive}), required=9");
+            
+            // If we're the host in multiplayer, re-send puzzle init so the client gets the update
+            if (Steam != null && Steam.IsRunning && Steam.IsHost && PlayerSync != null)
+            {
+                // Reset the sent flag so CheckPuzzleInitSync re-sends
+                var syncType = typeof(PlayerSync);
+                var sentField = syncType.GetField("_puzzleInitSent", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                sentField?.SetValue(PlayerSync, false);
+            }
         }
 
+        private void DrawDebugActorUI()
+        {
+            float panelWidth = 260f;
+            float panelX = 10f;
+            float panelY = 10f;
+            
+            // Calculate panel height based on content
+            int recordingCount = ActorRecorder.Recordings.Count;
+            int actorCount = ActorRecorder.Actors.Count;
+            float baseHeight = 110f; // Header + record button + labels
+            float recordingsHeight = recordingCount * 25f;
+            float actorsHeight = actorCount * 25f;
+            if (recordingCount > 0) baseHeight += 25f; // "Recordings:" label
+            if (actorCount > 0) baseHeight += 25f; // "Actors:" label
+            float panelHeight = Mathf.Min(baseHeight + recordingsHeight + actorsHeight, 500f);
+            
+            GUI.backgroundColor = new UnityEngine.Color(0.15f, 0.1f, 0.2f, 0.95f);
+            GUI.Box(new Rect(panelX, panelY, panelWidth, panelHeight), "");
+            
+            GUI.contentColor = new UnityEngine.Color(1f, 0.8f, 0.4f);
+            GUI.Label(new Rect(panelX + 10, panelY + 5, panelWidth - 20, 20), "🎬 Debug Mode (F4)");
+            GUI.contentColor = UnityEngine.Color.white;
+            
+            float y = panelY + 28f;
+            
+            // Entities status
+            GUI.Label(new Rect(panelX + 10, y, panelWidth - 20, 20), "Entities: OFF | All 9 vents active");
+            y += 22f;
+            
+            // Record button
+            if (ActorRecorder.IsRecording)
+            {
+                GUI.backgroundColor = new UnityEngine.Color(0.8f, 0.2f, 0.2f, 1f);
+                if (GUI.Button(new Rect(panelX + 10, y, panelWidth - 20, 25), "⏹ Stop Recording"))
+                {
+                    ActorRecorder.StopRecording();
+                }
+            }
+            else
+            {
+                GUI.backgroundColor = new UnityEngine.Color(0.8f, 0.3f, 0.3f, 1f);
+                if (GUI.Button(new Rect(panelX + 10, y, panelWidth - 20, 25), "⏺ Record"))
+                {
+                    ActorRecorder.StartRecording();
+                }
+            }
+            y += 30f;
+            
+            GUI.backgroundColor = new UnityEngine.Color(0.15f, 0.1f, 0.2f, 0.95f);
+            
+            // Recordings list
+            if (recordingCount > 0)
+            {
+                GUI.contentColor = new UnityEngine.Color(0.7f, 0.9f, 1f);
+                GUI.Label(new Rect(panelX + 10, y, panelWidth - 20, 20), $"Recordings ({recordingCount}):");
+                GUI.contentColor = UnityEngine.Color.white;
+                y += 22f;
+                
+                for (int i = 0; i < recordingCount; i++)
+                {
+                    var rec = ActorRecorder.Recordings[i];
+                    float duration = rec.Frames.Count * rec.FrameInterval;
+                    
+                    GUI.Label(new Rect(panelX + 10, y, 100, 20), $"{rec.Name} ({duration:F1}s)");
+                    
+                    // Play button — spawns an actor
+                    GUI.backgroundColor = new UnityEngine.Color(0.2f, 0.6f, 0.2f, 1f);
+                    if (GUI.Button(new Rect(panelX + panelWidth - 110, y, 40, 20), "▶"))
+                    {
+                        ActorRecorder.SpawnActor(rec, true);
+                    }
+                    
+                    // Delete recording button
+                    GUI.backgroundColor = new UnityEngine.Color(0.6f, 0.2f, 0.2f, 1f);
+                    if (GUI.Button(new Rect(panelX + panelWidth - 60, y, 40, 20), "✕"))
+                    {
+                        ActorRecorder.DeleteRecording(rec);
+                        break; // List modified, break out
+                    }
+                    
+                    GUI.backgroundColor = new UnityEngine.Color(0.15f, 0.1f, 0.2f, 0.95f);
+                    y += 25f;
+                }
+            }
+            
+            // Actors list
+            if (actorCount > 0)
+            {
+                GUI.contentColor = new UnityEngine.Color(0.9f, 0.9f, 0.5f);
+                GUI.Label(new Rect(panelX + 10, y, panelWidth - 20, 20), $"Actors ({actorCount}):");
+                GUI.contentColor = UnityEngine.Color.white;
+                y += 22f;
+                
+                for (int i = 0; i < ActorRecorder.Actors.Count; i++)
+                {
+                    var actor = ActorRecorder.Actors[i];
+                    string status = actor.IsPlaying ? "▶" : "⏸";
+                    
+                    GUI.Label(new Rect(panelX + 10, y, 120, 20), $"{status} {actor.Name}");
+                    
+                    // Pause/Resume
+                    GUI.backgroundColor = new UnityEngine.Color(0.3f, 0.3f, 0.6f, 1f);
+                    if (GUI.Button(new Rect(panelX + panelWidth - 110, y, 40, 20), actor.IsPlaying ? "⏸" : "▶"))
+                    {
+                        ActorRecorder.ToggleActor(actor);
+                    }
+                    
+                    // Remove actor
+                    GUI.backgroundColor = new UnityEngine.Color(0.6f, 0.2f, 0.2f, 1f);
+                    if (GUI.Button(new Rect(panelX + panelWidth - 60, y, 40, 20), "✕"))
+                    {
+                        ActorRecorder.RemoveActor(actor);
+                        break; // List modified
+                    }
+                    
+                    GUI.backgroundColor = new UnityEngine.Color(0.15f, 0.1f, 0.2f, 0.95f);
+                    y += 25f;
+                }
+                
+                // Remove all actors button
+                if (actorCount > 1)
+                {
+                    GUI.backgroundColor = new UnityEngine.Color(0.5f, 0.15f, 0.15f, 1f);
+                    if (GUI.Button(new Rect(panelX + 10, y, panelWidth - 20, 22), "Remove All Actors"))
+                    {
+                        ActorRecorder.RemoveAllActors();
+                    }
+                    GUI.backgroundColor = new UnityEngine.Color(0.15f, 0.1f, 0.2f, 0.95f);
+                }
+            }
+            
+            GUI.contentColor = UnityEngine.Color.white;
+            GUI.backgroundColor = UnityEngine.Color.white;
+        }
+#endif
+        
         private void OnGUI()
         {
             // Skip all UI rendering if hidden (Insert key toggle)
@@ -328,6 +956,14 @@ namespace Crawlspace2MP
                     GUI.contentColor = UnityEngine.Color.white;
                 }
             }
+            
+            // ===== Debug mode UI (F4) =====
+#if DEBUG
+            if (DebugEntitiesDisabled)
+            {
+                DrawDebugActorUI();
+            }
+#endif
             
             // Show full UI in Home/Intro scene or when not connected
             bool isLobbyScene = currentScene.Equals("Home", System.StringComparison.OrdinalIgnoreCase) ||
@@ -579,20 +1215,6 @@ namespace Crawlspace2MP
             {
                 GUILayout.Space(10);
                 
-                // Voice chat toggle - use button style for better visibility
-                bool voiceEnabled = VoiceChat?.Enabled ?? false;
-                string voiceText = voiceEnabled ? "🎤 Voice: ON" : "🎤 Voice: OFF";
-                GUI.backgroundColor = voiceEnabled ? new UnityEngine.Color(0.2f, 0.6f, 0.2f) : new UnityEngine.Color(0.4f, 0.4f, 0.4f);
-                if (GUILayout.Button(voiceText, GUILayout.Height(28)))
-                {
-                    if (VoiceChat != null)
-                    {
-                        VoiceChat.Enabled = !voiceEnabled;
-                    }
-                }
-                GUI.backgroundColor = new UnityEngine.Color(0.1f, 0.1f, 0.1f, 0.95f);
-                
-                GUILayout.Space(5);
                 GUI.backgroundColor = new UnityEngine.Color(0.6f, 0.2f, 0.2f);
                 if (GUILayout.Button("Disconnect", GUILayout.Height(28)))
                     Disconnect();
@@ -630,7 +1252,6 @@ namespace Crawlspace2MP
             // Don't allow joining if already in any session
             if (Steam.IsRunning || Steam.IsInLobby)
             {
-                Plugin.Log.LogInfo($"Already in session - IsRunning={Steam.IsRunning}, IsInLobby={Steam.IsInLobby}");
                 _statusMessage = "Already in a session! Disconnect first.";
                 return;
             }
@@ -646,6 +1267,35 @@ namespace Crawlspace2MP
             }
         }
 
+        public void HostGame()
+        {
+            StartHosting();
+        }
+        
+        public void JoinLobby(ulong lobbyId)
+        {
+            if (!_steamInitialized)
+            {
+                _statusMessage = "Steam not initialized!";
+                return;
+            }
+            
+            // Don't allow joining if already in any session
+            if (Steam.IsRunning || Steam.IsInLobby)
+            {
+                _statusMessage = "Already in a session! Disconnect first.";
+                return;
+            }
+            
+            Steam.JoinLobby(lobbyId);
+            _statusMessage = "Joining lobby...";
+        }
+        
+        public void DisconnectFromLobby()
+        {
+            Disconnect();
+        }
+        
         private void StartHosting()
         {
             // Only allow hosting in Home/Intro scene
@@ -667,7 +1317,6 @@ namespace Crawlspace2MP
             // Don't allow hosting if already in any session
             if (Steam.IsRunning || Steam.IsInLobby || Steam.IsJoining)
             {
-                Plugin.Log.LogInfo($"Already in session - IsRunning={Steam.IsRunning}, IsInLobby={Steam.IsInLobby}, IsJoining={Steam.IsJoining}");
                 if (Steam.IsHost)
                 {
                     _statusMessage = "Already hosting!";
@@ -697,7 +1346,7 @@ namespace Crawlspace2MP
             try
             {
                 Spectate?.Cleanup();
-                VoiceChat?.Cleanup();
+                // VoiceChat?.Cleanup(); // Disabled
                 PlayerSync?.Cleanup();
                 Steam?.Shutdown();
                 _statusMessage = "Disconnected";
@@ -712,9 +1361,8 @@ namespace Crawlspace2MP
 
         private void OnDestroy()
         {
-            Plugin.Log.LogWarning("MPManager OnDestroy called!");
             Spectate?.Cleanup();
-            VoiceChat?.Cleanup();
+            // VoiceChat?.Cleanup(); // Disabled
             PlayerSync?.Cleanup();
             Steam?.Shutdown();
         }
@@ -724,7 +1372,7 @@ namespace Crawlspace2MP
     {
         public const string PLUGIN_GUID = "com.crawlspace2.multiplayer";
         public const string PLUGIN_NAME = "Crawlspace2MP";
-        public const string PLUGIN_VERSION = "1.2.0";
+        public const string PLUGIN_VERSION = "1.1.1";
     }
     
     // Harmony patches to block client from controlling game flow
@@ -742,7 +1390,7 @@ namespace Crawlspace2MP
                 bool isLobbyOwner = steam.CurrentLobby.Owner.Id == Steamworks.SteamClient.SteamId;
                 if (!isLobbyOwner)
                 {
-                    Plugin.Log.LogInfo("[Client] Calendar blocked - only host can select night");
+                    Plugin.LogDebug("[Client] Calendar blocked - only host can select night");
                     return false; // Skip original method
                 }
             }
@@ -762,7 +1410,6 @@ namespace Crawlspace2MP
                 bool isLobbyOwner = steam.CurrentLobby.Owner.Id == Steamworks.SteamClient.SteamId;
                 if (!isLobbyOwner)
                 {
-                    Plugin.Log.LogInfo("[Client] Calendar blocked - only host can select night");
                     return false;
                 }
             }
@@ -783,7 +1430,6 @@ namespace Crawlspace2MP
             // Block if we're a client (not the lobby owner)
             if (steam.IsConnected && !isLobbyOwner)
             {
-                Plugin.Log.LogInfo("[Client] Door blocked - only host can start night");
                 return false;
             }
             
@@ -819,33 +1465,47 @@ namespace Crawlspace2MP
             var steam = MPManager.Instance?.Steam;
             if (steam == null || !steam.IsInLobby) return true; // Not in multiplayer
             
-            bool isLobbyOwner = steam.CurrentLobby.Owner.Id == Steamworks.SteamClient.SteamId;
-            
-            // Block if we're a client (not the lobby owner)
-            if (steam.IsConnected && !isLobbyOwner)
+            // Ghosts can't trigger scene exits
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
             {
-                Plugin.Log.LogInfo("[Client] Scene exit blocked - only host can complete night");
                 return false;
             }
             
-            // If we're the host, send scene change BEFORE the original method runs
-            if (isLobbyOwner && steam.IsRunning)
+            // All alive remote players must be in the main room to leave
+            if (MPManager.Instance?.PlayerSync != null)
             {
-                // Call loadSelectedNight() first to populate scenename (same as original method does)
+                var alivePositions = MPManager.Instance.PlayerSync.GetRemotePlayerPositionsNonGhost();
+                foreach (var pos in alivePositions)
+                {
+                    // Main room bounds (same as clown room check)
+                    bool inMainRoom = pos.x > -6.8f && pos.x < 0.5f && pos.z > -4.3f && pos.z < 3.1f;
+                    if (!inMainRoom)
+                    {
+                        Plugin.Log.LogInfo("[Exit] Blocked - alive remote player not in main room yet");
+                        return false;
+                    }
+                }
+            }
+            
+            bool isLobbyOwner = steam.CurrentLobby.Owner.Id == Steamworks.SteamClient.SteamId;
+            
+            // Any player (host or client) can trigger exit — the "all alive players in room"
+            // check above already gates it. Send scene change so the other player loads too.
+            if (steam.IsRunning)
+            {
                 __instance.loadSelectedNight();
                 
-                // scenename is private, so we need reflection
                 var scenenameField = typeof(sceneLeave).GetField("scenename", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                 string sceneName = scenenameField?.GetValue(__instance) as string;
                 
                 if (!string.IsNullOrEmpty(sceneName))
                 {
-                    Plugin.Log.LogInfo($"[Host] Scene exit, sending scene change: {sceneName}");
+                    Plugin.Log.LogInfo($"[{(isLobbyOwner ? "Host" : "Client")}] Scene exit, sending scene change: {sceneName}");
                     MPManager.Instance.PlayerSync.SendSceneChange(sceneName);
                 }
                 else
                 {
-                    Plugin.Log.LogWarning("[Host] sceneLeave.scenename is empty after loadSelectedNight()");
+                    Plugin.Log.LogWarning("[Exit] sceneLeave.scenename is empty after loadSelectedNight()");
                 }
             }
             
@@ -863,7 +1523,6 @@ namespace Crawlspace2MP
                 MPManager.Instance.Steam.IsConnected && 
                 !MPManager.Instance.Steam.IsHost)
             {
-                Plugin.Log.LogInfo("[Client] Debug menu blocked - only host can change scenes");
                 return false;
             }
             return true;
@@ -876,11 +1535,13 @@ namespace Crawlspace2MP
     {
         static void Postfix(int paintingID)
         {
-            // Don't re-send if we're receiving a flash from network
             if (MPManager.Instance?.PlayerSync?.IsReceivingPaintingFlash == true)
                 return;
             
-            // Send the flash to other players
+            // Ghosts can't interact with paintings
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
+                return;
+            
             MPManager.Instance?.PlayerSync?.SendPaintingFlash(paintingID);
         }
     }
@@ -917,37 +1578,42 @@ namespace Crawlspace2MP
     }
     
     // Disable painting timer/death logic on client - host controls it
+    // Painting death timer - runs on BOTH players
+    // Entity state is synced from host, but each player checks their own room position
+    // This way paintings can kill the client even if the host isn't in the main room
     [HarmonyPatch(typeof(paintingControl), "timerControl")]
     public class PaintingTimerPatch
     {
-        static bool Prefix()
+        static bool Prefix(paintingControl __instance)
         {
-            // Only controller should run death timer logic
-            if (MPManager.Instance?.PlayerSync != null && 
-                MPManager.Instance.Steam != null &&
-                MPManager.Instance.Steam.IsRunning &&
-                !MPManager.Instance.PlayerSync.ShouldControlMonsters)
+            // Debug mode — no painting kills
+#if DEBUG
+            if (MPManager.DebugEntitiesDisabled) return false;
+#endif
+            
+            // Ghosts don't have painting death timers
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
             {
-                return false; // Skip on client when host is controlling
+                return false;
             }
+            
+            // Let it run for everyone alive - each player has their own death timer
+            // based on their own isInMainRoom state
             return true;
         }
     }
     
-    // Sync painting death to all players - when paintings kill, everyone in main room dies
+    // Painting kills are LOCAL per player - each player's own timerControl() handles
+    // their death based on whether THEY are in the main room. No need to sync kills.
+    // Previously this sent painting death to the other player, causing double-kills.
     [HarmonyPatch(typeof(paintingControl), "killPlayer")]
     public class PaintingKillSyncPatch
     {
         static void Postfix(paintingControl __instance)
         {
-            // When host triggers painting death, sync to client
-            if (MPManager.Instance?.Steam != null && 
-                MPManager.Instance.Steam.IsRunning &&
-                MPManager.Instance.PlayerSync.ShouldControlMonsters)
-            {
-                // Send painting death to other players
-                MPManager.Instance.PlayerSync.SendPaintingDeath();
-            }
+            // No-op: painting deaths are independent per player.
+            // Each player's timerControl() counts their own death timer
+            // based on their own isInMainRoom state.
         }
     }
     
@@ -1014,20 +1680,55 @@ namespace Crawlspace2MP
         }
     }
     
-    // Disable clown attack/kill timer on non-controller
+    // Clown FixedUpdate: controller handles AI logic, but client still needs kill timer
     [HarmonyPatch(typeof(clownRandom), "FixedUpdate")]
     public class ClownUpdatePatch
     {
-        static bool Prefix()
+        static bool Prefix(clownRandom __instance)
         {
-            // Only controller should run clown logic
-            if (MPManager.Instance?.Steam != null && 
-                MPManager.Instance.Steam.IsRunning &&
-                !MPManager.Instance.PlayerSync.ShouldControlMonsters)
+            // Ghosts can't die
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
             {
-                return false; // Skip on non-controller
+                return false;
             }
-            return true;
+            
+            // Controller runs everything normally
+            if (MPManager.Instance?.Steam == null || 
+                !MPManager.Instance.Steam.IsRunning ||
+                MPManager.Instance.PlayerSync.ShouldControlMonsters)
+            {
+                return true;
+            }
+            
+            // Non-controller: block AI logic but run kill timer
+            var attackField = typeof(clownRandom).GetField("clownAttackingSwitch", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            bool isAttacking = attackField != null ? (bool)attackField.GetValue(__instance) : false;
+            
+            if (isAttacking)
+            {
+                var killTimerField = typeof(clownRandom).GetField("clownKillTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                int killTimer = killTimerField != null ? (int)killTimerField.GetValue(__instance) : 0;
+                killTimer++;
+                killTimerField?.SetValue(__instance, killTimer);
+                
+                if (killTimer >= __instance.clownTimeToKill)
+                {
+                    __instance.JSC.onDeathClown();
+                    killTimerField?.SetValue(__instance, 0);
+                }
+                
+                // Room bounds check - if player leaves room, reset attack
+                if (!(__instance.player.transform.position.x > -6.4f) || 
+                    !(__instance.player.transform.position.x < 0.1f) || 
+                    !(__instance.player.transform.position.z > -3.9f) || 
+                    !(__instance.player.transform.position.z < 2.7f))
+                {
+                    killTimerField?.SetValue(__instance, 0);
+                    attackField?.SetValue(__instance, false);
+                }
+            }
+            
+            return false; // Block the rest (changeOnComplete, etc.)
         }
     }
     
@@ -1057,7 +1758,10 @@ namespace Crawlspace2MP
             if (MPManager.Instance?.PlayerSync?.IsReceivingJeffFlash == true)
                 return;
             
-            // Send the flash to other players
+            // Ghosts can't help defeat Jeff
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
+                return;
+            
             MPManager.Instance?.PlayerSync?.SendJeffFlash();
         }
     }
@@ -1165,13 +1869,74 @@ namespace Crawlspace2MP
     {
         static bool Prefix(henryBrain __instance)
         {
-            // Only host runs Henry AI - client receives position sync
+            // Only controller runs Henry AI - client receives position sync
             if (MPManager.Instance?.Steam != null && MPManager.Instance.Steam.IsRunning)
             {
-                if (!MPManager.Instance.Steam.IsHost)
-                    return false; // Block on client
+                if (!MPManager.Instance.PlayerSync.ShouldControlMonsters)
+                    return false; // Block on non-controller
             }
             return true;
+        }
+    }
+    
+    // HENRY: Fix camping behavior - use closest player position for bounds check
+    [HarmonyPatch(typeof(henryBrain), "outOfBoundCheck")]
+    public class HenryBoundsCheckPatch
+    {
+        static bool Prefix(henryBrain __instance)
+        {
+            // Only controller runs this
+            if (MPManager.Instance?.Steam != null && MPManager.Instance.Steam.IsRunning)
+            {
+                if (!MPManager.Instance.PlayerSync.ShouldControlMonsters)
+                    return false;
+            }
+            
+            // In multiplayer, Henry should only reset if ALL players are in the main room
+            // Original game resets when the single player enters main room
+            // With multiplayer, if one player is still in the vents, Henry should keep chasing
+            var playerSync = MPManager.Instance?.PlayerSync;
+            if (playerSync != null && MPManager.Instance.Steam.IsRunning)
+            {
+                // Check local player position
+                Vector3 localPos = __instance.player.transform.position;
+                bool localInMainRoom = localPos.x > -6.8f && localPos.x < 0.5f && 
+                                       localPos.z > -4.3f && localPos.z < 3.1f;
+                
+                // Check if any remote player is NOT in the main room (and alive)
+                var remotePositions = playerSync.GetRemotePlayerPositionsNonGhost();
+                bool anyRemoteOutsideMainRoom = false;
+                foreach (var pos in remotePositions)
+                {
+                    bool inMainRoom = pos.x > -6.8f && pos.x < 0.5f && 
+                                      pos.z > -4.3f && pos.z < 3.1f;
+                    if (!inMainRoom)
+                    {
+                        anyRemoteOutsideMainRoom = true;
+                        break;
+                    }
+                }
+                
+                // Only reset Henry if ALL alive players are in the main room
+                // If local player is in main room but a remote player is in the vents, don't reset
+                if (localInMainRoom && !anyRemoteOutsideMainRoom)
+                {
+                    var cooldownField = typeof(henryBrain).GetField("cooldownTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    int cooldownTimer = cooldownField != null ? (int)cooldownField.GetValue(__instance) : 0;
+                    
+                    if (cooldownTimer > 50)
+                    {
+                        cooldownField?.SetValue(__instance, 0);
+                        __instance.setPosRandom();
+                        return false;
+                    }
+                    cooldownField?.SetValue(__instance, cooldownTimer + 1);
+                }
+                
+                return false; // We handled it
+            }
+            
+            return true; // Not in multiplayer, run original
         }
     }
     
@@ -1181,8 +1946,10 @@ namespace Crawlspace2MP
     {
         static bool Prefix(SmileBrain __instance)
         {
-            // Let Smile run locally - each player's Smile chases THEM
-            // State (isChasing, chaseTime) is synced so they trigger at the same time
+            // Ghosts don't get chased
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
+                return false;
+            
             return true;
         }
     }
@@ -1223,7 +1990,7 @@ namespace Crawlspace2MP
         }
     }
     
-    // HENRY: SYNCED - Block state control on client
+    // HENRY: SYNCED - Block AI logic on client but keep death check
     [HarmonyPatch(typeof(henryBrain), "playerDistFuncStateControl")]
     public class HenryClientPatch
     {
@@ -1235,17 +2002,22 @@ namespace Crawlspace2MP
                 return false;
             }
             
-            // Only host runs Henry AI - client receives position sync
-            if (MPManager.Instance?.Steam != null && MPManager.Instance.Steam.IsRunning)
+            // Client: block ALL AI logic for Henry (position is synced from host)
+            // Kill checks are handled by the HOST via targeted kill packets
+            // This prevents double-kills when both players are near Henry
+            if (MPManager.Instance?.Steam != null && MPManager.Instance.Steam.IsRunning &&
+                MPManager.Instance.PlayerSync != null)
             {
-                if (!MPManager.Instance.Steam.IsHost)
-                    return false; // Block on client
+                if (!MPManager.Instance.PlayerSync.ShouldControlMonsters)
+                {
+                    return false; // Block everything - host handles kills via targeted packet
+                }
             }
             return true;
         }
     }
     
-    // HAROLD: SYNCED - Block AI on client
+    // HAROLD: SYNCED - Block AI on client, host handles kills via targeted packet
     [HarmonyPatch(typeof(mapEnBrain), "playerDistFunc")]
     public class HaroldClientPatch
     {
@@ -1257,11 +2029,29 @@ namespace Crawlspace2MP
                 return false;
             }
             
-            // Only host runs Harold AI - client receives position sync
-            if (MPManager.Instance?.Steam != null && MPManager.Instance.Steam.IsRunning)
+            // Client: block ALL AI for Harold (position is synced from host)
+            // Kill checks are handled by the HOST via targeted kill packets
+            // Keep minimap/haptics since those are local visual feedback
+            if (MPManager.Instance?.Steam != null && MPManager.Instance.Steam.IsRunning &&
+                MPManager.Instance.PlayerSync != null)
             {
-                if (!MPManager.Instance.Steam.IsHost)
-                    return false; // Block on client
+                if (!MPManager.Instance.PlayerSync.ShouldControlMonsters)
+                {
+                    // Still do minimap + haptics (local visual feedback only)
+                    if (__instance.player != null)
+                    {
+                        float dist = Vector3.Distance(__instance.player.transform.position, __instance.transform.position);
+                        if (dist < __instance.minimapViewDist)
+                        {
+                            __instance.mmc.setMapIconPosEnemy();
+                            if (dist < __instance.minimapViewDist / 2f)
+                            {
+                                __instance.hapticTriggerFunc();
+                            }
+                        }
+                    }
+                    return false; // Block AI + kill check - host handles kills
+                }
             }
             return true;
         }
@@ -1273,11 +2063,63 @@ namespace Crawlspace2MP
     {
         static bool Prefix(mapEnBrain __instance)
         {
-            // Only host runs Harold AI - client receives position sync
+            // Only controller runs Harold AI - client receives position sync
             if (MPManager.Instance?.Steam != null && MPManager.Instance.Steam.IsRunning)
             {
-                if (!MPManager.Instance.Steam.IsHost)
-                    return false; // Block on client
+                if (!MPManager.Instance.PlayerSync.ShouldControlMonsters)
+                    return false; // Block on non-controller
+                
+                // Custom wander logic that accounts for multiplayer
+                __instance.agent.speed = __instance.baseSpeed;
+                
+                // Get battery charge from closest ALIVE player
+                float batteryCharge = BackpackControl.batteryCharge; // Default to local
+                bool hasAlivePlayer = !MPManager.Instance.PlayerSync.IsLocalGhost;
+                
+                // If local player is ghost, check remote players
+                if (MPManager.Instance.PlayerSync.IsLocalGhost)
+                {
+                    batteryCharge = MPManager.Instance.PlayerSync.GetRemoteBatteryCharge();
+                    // Check if any remote player is alive (non-ghost)
+                    var remotePositions = MPManager.Instance.PlayerSync.GetRemotePlayerPositionsNonGhost();
+                    hasAlivePlayer = remotePositions.Count > 0;
+                }
+                
+                // If no alive players, keep wandering (don't lock)
+                if (!hasAlivePlayer)
+                {
+                    var playerLockField = typeof(mapEnBrain).GetField("playerLock", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    playerLockField?.SetValue(__instance, false);
+                    
+                    // Keep moving to random positions
+                    if (Vector3.Distance(__instance.transform.position, __instance.agent.destination) < 0.1f)
+                    {
+                        __instance.setRandomPos();
+                    }
+                    
+                    return false; // Skip original method
+                }
+                
+                // Access playerLock field via reflection
+                var playerLockFieldRef = typeof(mapEnBrain).GetField("playerLock", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                bool playerLock = playerLockFieldRef != null ? (bool)playerLockFieldRef.GetValue(__instance) : false;
+                
+                if (batteryCharge <= 0.2f)
+                {
+                    playerLockFieldRef?.SetValue(__instance, true);
+                }
+                else if (playerLock)
+                {
+                    playerLockFieldRef?.SetValue(__instance, false);
+                    __instance.setRandomPos();
+                }
+                
+                if (Vector3.Distance(__instance.transform.position, __instance.agent.destination) < 0.1f)
+                {
+                    __instance.setRandomPos();
+                }
+                
+                return false; // Skip original method
             }
             return true;
         }
@@ -1300,13 +2142,22 @@ namespace Crawlspace2MP
         }
     }
     
-    // Let EnemyDifMaster run locally - attack triggers happen for each player
+    // Only controller runs EnemyDifMaster attack timer for SYNCED monsters (Henry/Harold)
+    // Sparky, Jeff, and Smile are independent - they trigger locally on each player
+    // But multiAttackTrigger controls Sparky/Jeff/Smile timing, so let it run on both
     [HarmonyPatch(typeof(EnemyDifMaster), "multiAttackTrigger")]
     public class EnemyDifMasterMultiAttackPatch
     {
         static bool Prefix()
         {
-            // Let attack triggers run locally
+#if DEBUG
+            if (MPManager.DebugEntitiesDisabled) return false;
+#endif
+            
+            // Ghosts don't trigger monster attacks
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
+                return false;
+            
             return true;
         }
     }
@@ -1316,28 +2167,57 @@ namespace Crawlspace2MP
     {
         static bool Prefix()
         {
-            // Let attack triggers run locally
+#if DEBUG
+            if (MPManager.DebugEntitiesDisabled) return false;
+#endif
+            
+            // Ghosts don't trigger monster attacks
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
+                return false;
+            
             return true;
         }
     }
     
-    // SMILE: Trigger synced - when host triggers, clients also trigger (but at their own position)
-    [HarmonyPatch(typeof(SmileBrain), "onTrigger")]
-    public class SmileTriggerPatch
+    // Sync Sparky trigger from controller to non-controller
+    [HarmonyPatch(typeof(sparkyBrain), "triggerAttack")]
+    public class SparkyTriggerSyncPatch
     {
-        static void Postfix(SmileBrain __instance)
+        static void Postfix(sparkyBrain __instance)
         {
-            // When Smile triggers, sync the trigger event (not position)
-            // Each player's Smile will teleport near THEM
             if (MPManager.Instance?.Steam != null && 
                 MPManager.Instance.Steam.IsRunning &&
-                MPManager.Instance.Steam.IsHost)
+                MPManager.Instance.PlayerSync != null &&
+                MPManager.Instance.PlayerSync.ShouldControlMonsters)
             {
-                // Send trigger event - clients will run their own onTrigger
-                MPManager.Instance.PlayerSync?.SendSmileTrigger(__instance.transform.position);
+                // Controller triggered Sparky - sync to other players
+                // The state sync will pick up currentState == 2 and apply it
+                // No extra packet needed - the 10Hz monster sync handles it
             }
         }
     }
+    
+    // Sync Jeff trigger from controller to non-controller
+    [HarmonyPatch(typeof(jeffBrain), "triggerAttack")]
+    public class JeffTriggerSyncPatch
+    {
+        static void Postfix(jeffBrain __instance)
+        {
+            if (MPManager.Instance?.Steam != null && 
+                MPManager.Instance.Steam.IsRunning &&
+                MPManager.Instance.PlayerSync != null &&
+                MPManager.Instance.PlayerSync.ShouldControlMonsters)
+            {
+                // Controller triggered Jeff - sync to other players
+                // The state sync will pick up currentState == 2 and apply it
+                // No extra packet needed - the 10Hz monster sync handles it
+            }
+        }
+    }
+    
+    // SMILE: Fully independent per player (like Sparky) - NO sync needed
+    // Each player's EnemyDifMaster triggers Smile locally via attackTrigger()
+    // Removed SmileTriggerPatch - was causing infinite trigger spam
     
     // Prevent client from running random puzzle initialization - host will sync the puzzle state
     [HarmonyPatch(typeof(PuzzleMaster), "Start")]
@@ -1345,18 +2225,35 @@ namespace Crawlspace2MP
     {
         static bool Prefix(PuzzleMaster __instance)
         {
-            // Only skip on client - host needs to run the random initialization
-            if (MPManager.Instance?.Steam != null && 
-                MPManager.Instance.Steam.IsRunning &&
-                !MPManager.Instance.Steam.IsHost)
+            bool isInMultiplayer = MPManager.Instance?.Steam != null && MPManager.Instance.Steam.IsRunning;
+            if (!isInMultiplayer) return true;
+            
+            bool isHost = MPManager.Instance.Steam.IsHost;
+            bool isGhostHost = isHost && MPManager.Instance.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost;
+            
+            // Skip random initialization on client (host will sync the real state)
+            // Also skip on ghost host (we'll restore saved state after Start runs)
+            if (!isHost || isGhostHost)
             {
-                Plugin.Log.LogInfo("[Client] Skipping PuzzleMaster random init - waiting for host sync");
-                
                 // Still need to initialize the static variables
                 PuzzleMaster.totalCompletedPuzzles = 0;
                 PuzzleMaster.requiredPuzzles = __instance.totalPuzzlesThisNight;
                 
-                // Don't run the random enableFan() calls - host will tell us which puzzles are active
+                // Hide all map indicators until state is synced/restored
+                PuzzleController[] controllers = {
+                    __instance.pCon1, __instance.pCon2, __instance.pCon3,
+                    __instance.pCon4, __instance.pCon5, __instance.pCon6,
+                    __instance.pCon7, __instance.pCon8, __instance.pCon9
+                };
+                foreach (var pc in controllers)
+                {
+                    if (pc != null && pc.thisMapIndicator != null)
+                        pc.thisMapIndicator.SetActive(false);
+                }
+                
+                if (isGhostHost)
+                    Plugin.Log.LogInfo("[Ghost Host] Skipping PuzzleMaster.Start() random init - will restore saved state");
+                
                 return false;
             }
             return true;
@@ -1374,7 +2271,6 @@ namespace Crawlspace2MP
                 MPManager.Instance.Steam.IsRunning &&
                 !MPManager.Instance.Steam.IsHost)
             {
-                Plugin.Log.LogInfo("[Client] Skipping random puzzle preset - waiting for host sync");
                 return false;
             }
             return true;
@@ -1391,11 +2287,35 @@ namespace Crawlspace2MP
             var playerSync = MPManager.Instance?.PlayerSync;
             if (playerSync == null) return true; // Not in multiplayer
             
+            var pcType = typeof(PuzzleController);
+            
             // Check if local battery is in this puzzle slot
             bool localBatteryHere = __instance.thisPuzzleID == BackpackControl.batteryLocationID && BackpackControl.batteryCharge > 0f;
             
-            // If local battery is here, let original run normally
-            if (localBatteryHere) return true;
+            // If local battery is here, mostly let original run — but protect against presetID == 0
+            if (localBatteryHere)
+            {
+                var presetIDField = pcType.GetField("puzzlePresetID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                int presetID = presetIDField != null ? (int)presetIDField.GetValue(__instance) : 0;
+                
+                // If preset hasn't been synced yet (client waiting for host init), hold timer2 below 5
+                // so loadPreset(0) never gets called (which would make the puzzle unsolvable).
+                // We set to 3 because the original FixedUpdate will increment it to 4 (not 5).
+                if (presetID == 0)
+                {
+                    var timer2Field = pcType.GetField("timer2", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    if (timer2Field != null)
+                    {
+                        int timer2 = (int)timer2Field.GetValue(__instance);
+                        if (timer2 >= 3)
+                        {
+                            timer2Field.SetValue(__instance, 3);
+                        }
+                    }
+                }
+                
+                return true;
+            }
             
             // Check if remote player has battery in this puzzle's slot
             int remoteBatteryLocation = playerSync.GetRemoteBatteryLocationID();
@@ -1405,30 +2325,41 @@ namespace Crawlspace2MP
             // If remote battery is here, keep puzzle active but skip original (which would reset it)
             if (remoteBatteryHere)
             {
+                // DON'T run the timer/handColorID/clearTempTiles logic here.
+                // The remote player is controlling this puzzle — block state comes via
+                // PACKET_PUZZLE_BLOCK visual sync. Running the timer would erase their progress.
+                
                 // Keep the puzzle lit up
                 __instance.setMats(1);
                 
-                // Handle timer2 for loadPreset (only once)
-                var timer2Field = typeof(PuzzleController).GetField("timer2", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                var puzzleCompletedField = typeof(PuzzleController).GetField("puzzleHasCompleted", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                var presetIDField = typeof(PuzzleController).GetField("puzzlePresetID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                // Handle timer2 for loadPreset (mirrors original exactly)
+                var timer2Field2 = pcType.GetField("timer2", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                var puzzleCompletedField = pcType.GetField("puzzleHasCompleted", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                var presetIDField2 = pcType.GetField("puzzlePresetID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                 
-                if (timer2Field != null && puzzleCompletedField != null && presetIDField != null)
+                if (timer2Field2 != null && puzzleCompletedField != null && presetIDField2 != null)
                 {
-                    int timer2 = (int)timer2Field.GetValue(__instance);
+                    int timer2 = (int)timer2Field2.GetValue(__instance);
                     bool completed = (bool)puzzleCompletedField.GetValue(__instance);
-                    int presetID = (int)presetIDField.GetValue(__instance);
+                    int presetID = (int)presetIDField2.GetValue(__instance);
                     
-                    if (timer2 < 10) // Keep incrementing until stable
+                    timer2++;
+                    
+                    if (timer2 == 5 && !completed)
                     {
-                        timer2++;
-                        timer2Field.SetValue(__instance, timer2);
-                        
-                        if (timer2 == 5 && !completed && presetID > 0)
+                        if (presetID > 0)
                         {
+                            // Preset is ready, load it
                             __instance.loadPreset(presetID);
                         }
+                        else
+                        {
+                            // Preset not synced yet - hold timer2 at 4 so we retry next frame
+                            timer2 = 4;
+                        }
                     }
+                    
+                    timer2Field2.SetValue(__instance, timer2);
                 }
                 
                 return false; // Skip original - don't let it call resetBoard()
@@ -1449,44 +2380,16 @@ namespace Crawlspace2MP
             if (MPManager.Instance?.Steam != null && 
                 MPManager.Instance.Steam.IsRunning)
             {
+                // Track that we completed this puzzle locally
+                MPManager.Instance.PlayerSync.MarkPuzzleCompleted(__instance.thisPuzzleID);
                 MPManager.Instance.PlayerSync.SendPuzzleComplete(__instance.thisPuzzleID);
             }
         }
     }
     
-    // Sync puzzle block changes in real-time (throttled)
-    [HarmonyPatch(typeof(PuzzleBlock), "setThisID")]
-    public class PuzzleBlockPatch
-    {
-        // Throttle: track last send time per puzzle
-        private static Dictionary<int, float> _lastBlockSendTime = new Dictionary<int, float>();
-        private static float _throttleInterval = 0.05f; // 50ms between sends per puzzle
-        
-        static void Postfix(PuzzleBlock __instance, int input)
-        {
-            // Don't re-send if we're receiving from network
-            if (MPManager.Instance?.PlayerSync?.IsReceivingPuzzleBlock == true)
-                return;
-            
-            // Send block change to other players
-            if (MPManager.Instance?.Steam != null && 
-                MPManager.Instance.Steam.IsRunning)
-            {
-                int puzzleID = __instance.pcontrol.thisPuzzleID;
-                
-                // Throttle sends per puzzle
-                float now = Time.time;
-                if (_lastBlockSendTime.TryGetValue(puzzleID, out float lastTime))
-                {
-                    if (now - lastTime < _throttleInterval)
-                        return; // Too soon, skip
-                }
-                _lastBlockSendTime[puzzleID] = now;
-                
-                MPManager.Instance.PlayerSync.SendPuzzleBlock(puzzleID, __instance.blockNumber, input);
-            }
-        }
-    }
+    // NOTE: Puzzle block visual sync has been REMOVED
+    // Each player solves puzzles independently - only completion is synced
+    // This prevents buggy visual sync where shapes appear in wrong positions
     
     // Sync clown nose honk
     [HarmonyPatch(typeof(clownNose), "checkHonk")]
@@ -1494,17 +2397,18 @@ namespace Crawlspace2MP
     {
         static void Prefix(clownNose __instance, out bool __state)
         {
-            // Check if honk sound is playing before
             __state = __instance.honkSound != null && __instance.honkSound.isPlaying;
         }
         
         static void Postfix(clownNose __instance, bool __state)
         {
-            // Don't re-send if we're receiving from network
             if (MPManager.Instance?.PlayerSync?.IsReceivingHonk == true)
                 return;
             
-            // Check if honk just started playing
+            // Ghosts can't honk
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
+                return;
+            
             if (__instance.honkSound != null && __instance.honkSound.isPlaying && !__state)
             {
                 if (MPManager.Instance?.Steam != null && 
@@ -1522,40 +2426,44 @@ namespace Crawlspace2MP
     {
         static void Postfix(ventSoundPlayer __instance)
         {
-            // Don't re-send if we're receiving from network
             if (MPManager.Instance?.PlayerSync?.IsReceivingVentSound == true)
                 return;
             
-            // Send the sound to other players
+            // Ghosts don't make vent sounds
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
+                return;
+            
             if (MPManager.Instance?.Steam != null && 
                 MPManager.Instance.Steam.IsRunning)
             {
-                // Get the spawn position that was just set
                 Vector3 soundPos = __instance.spawnpos.position;
                 MPManager.Instance.PlayerSync.SendVentSound(soundPos, 0);
-                Plugin.Log.LogInfo($"[VentSound] Sent vent sound at {soundPos}");
             }
         }
     }
     
-    // Also patch crawlSoundContrl for crawling sounds (haptic feedback triggers this)
-    [HarmonyPatch(typeof(crawlSoundContrl), "playHaptic")]
+    // Sync crawling sounds to remote player
+    [HarmonyPatch(typeof(crawlSoundContrl), "playTapSound")]
     public class CrawlSoundPatch
     {
         static void Postfix(crawlSoundContrl __instance)
         {
-            // Don't re-send if we're receiving from network
             if (MPManager.Instance?.PlayerSync?.IsReceivingVentSound == true)
                 return;
             
-            // Send the sound to other players
+            // Ghosts don't make crawl sounds
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
+                return;
+            
             if (MPManager.Instance?.Steam != null && 
                 MPManager.Instance.Steam.IsRunning)
             {
-                // Use the crawlSoundContrl's position
+                // Send the player's position so the remote player hears it in 3D
                 Vector3 soundPos = __instance.transform.position;
-                MPManager.Instance.PlayerSync.SendVentSound(soundPos, 1); // 1 = crawl sound
-                Plugin.Log.LogInfo($"[CrawlSound] Sent crawl sound at {soundPos}");
+                
+                // Also send whether we're in main room so remote plays correct sound set
+                bool inMainRoom = __instance.mtc != null && __instance.mtc.isInMainRoom;
+                MPManager.Instance.PlayerSync.SendCrawlSound(soundPos, inMainRoom);
             }
         }
     }
@@ -1587,39 +2495,70 @@ namespace Crawlspace2MP
         }
     }
     
+    // Sync puzzle block visual changes to the other player in real-time
+    [HarmonyPatch(typeof(PuzzleBlock), "setThisID")]
+    public class PuzzleBlockVisualSyncPatch
+    {
+        static void Postfix(PuzzleBlock __instance, int input)
+        {
+            if (MPManager.Instance?.Steam == null || !MPManager.Instance.Steam.IsRunning)
+                return;
+            
+            // Don't re-send changes we received from the other player
+            if (MPManager.Instance.PlayerSync.IsReceivingPuzzleBlock)
+                return;
+            
+            // Send if EITHER player's battery is powering this puzzle
+            if (__instance.pcontrol == null) return;
+            int puzzleID = __instance.pcontrol.thisPuzzleID;
+            
+            bool localBatteryHere = puzzleID == BackpackControl.batteryLocationID && BackpackControl.batteryCharge > 0f;
+            int remoteBattery = MPManager.Instance.PlayerSync.GetRemoteBatteryLocationID();
+            bool remoteBatteryHere = puzzleID == remoteBattery;
+            
+            if (!localBatteryHere && !remoteBatteryHere)
+                return;
+            
+            MPManager.Instance.PlayerSync.SendPuzzleBlock(puzzleID, __instance.blockNumber, input);
+        }
+    }
+    
     // NOTE: Crank lock removed - not needed since each player can only charge their own battery
     // The crank checks BackpackControl.batteryLocationID == 1 which is per-player
     
     // Override crank battery visual when remote player has battery in crank
-    // The game's batteryScreenVisual() checks LOCAL battery location, but we need to show
-    // the remote player's battery when THEY have it in the crank
+    // Uses Prefix to SKIP the original method (which would zero out the display)
+    // and instead show the smoothly interpolated remote charge value
     [HarmonyPatch(typeof(crankControl), "batteryScreenVisual")]
     public class CrankVisualSyncPatch
     {
-        static void Postfix(crankControl __instance)
+        static bool Prefix(crankControl __instance)
         {
-            // Only apply in multiplayer
+            // Not in multiplayer - let original run
             if (MPManager.Instance?.Steam == null || !MPManager.Instance.Steam.IsRunning)
-                return;
+                return true;
             
-            // If LOCAL player has battery in crank (location 1), the game already handles it
+            // If LOCAL player has battery in crank, let the game handle it normally
             if (BackpackControl.batteryLocationID == 1)
-                return;
+                return true;
             
-            // Check if remote player has battery in crank
-            var remoteState = MPManager.Instance.PlayerSync.GetFirstRemoteBatteryState();
-            if (remoteState != null && remoteState.LocationID == 1)
-            {
-                // Remote player has battery in crank - show their battery visual
-                if (__instance.batteryFill != null)
-                {
-                    __instance.batteryFill.fillAmount = remoteState.Charge / 55f;
-                }
-                if (__instance.batteryIMG != null)
-                {
-                    __instance.batteryIMG.SetActive(true);
-                }
-            }
+            // Check if a remote player has battery in crank
+            if (!MPManager.Instance.PlayerSync.RemoteHasBatteryInCrank)
+                return true; // No remote battery in crank, let original run (it will hide the display)
+            
+            // Remote player has battery in crank - we handle the display ourselves
+            float smoothCharge = MPManager.Instance.PlayerSync.RemoteCrankChargeDisplay;
+            
+            if (__instance.batteryFill != null)
+                __instance.batteryFill.fillAmount = smoothCharge / 55f;
+            
+            if (__instance.batteryIMG != null)
+                __instance.batteryIMG.SetActive(true);
+            
+            // Also apply interpolated rotation to the crank handle
+            __instance.transform.rotation = MPManager.Instance.PlayerSync.RemoteCrankRotationDisplay;
+            
+            return false; // Skip original - prevents it from zeroing out our display
         }
     }
     
@@ -1637,15 +2576,16 @@ namespace Crawlspace2MP
             if (BackpackControl.batteryLocationID == __instance.thisStationID)
                 return;
             
-            var remoteState = MPManager.Instance.PlayerSync?.GetFirstRemoteBatteryState();
-            if (remoteState != null && remoteState.LocationID == __instance.thisStationID)
+            // Check if ANY remote player has battery at this station (supports 3+ players)
+            var remoteState = MPManager.Instance.PlayerSync?.GetRemoteBatteryAtLocation(__instance.thisStationID);
+            if (remoteState != null)
             {
                 if (__instance.thisBatteryVisual != null)
                     __instance.thisBatteryVisual.SetActive(true);
             }
             else
             {
-                // Remote player doesn't have battery here either - make sure it's hidden
+                // No remote player has battery here either - make sure it's hidden
                 // (unless local player has it, which is handled above)
                 if (__instance.thisBatteryVisual != null && BackpackControl.batteryLocationID != __instance.thisStationID)
                     __instance.thisBatteryVisual.SetActive(false);
@@ -1660,6 +2600,10 @@ namespace Crawlspace2MP
         static void Postfix(VentAnimControl __instance, Collider other)
         {
             if (MPManager.Instance?.Steam == null || !MPManager.Instance.Steam.IsRunning)
+                return;
+            
+            // Ghosts don't sync vent doors
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
                 return;
             
             // Send the vent door trigger to other players
@@ -1677,7 +2621,6 @@ namespace Crawlspace2MP
             var steam = MPManager.Instance?.Steam;
             if (steam != null && steam.IsInLobby && steam.IsConnected && !steam.IsHost)
             {
-                Plugin.Log.LogInfo("[Client] Blocked painting randomization - waiting for host sync");
                 return false; // Block client from randomizing
             }
             return true;
@@ -1713,12 +2656,16 @@ namespace Crawlspace2MP
             int targetZone = batteryZoneCheck.batteryZoneIDGlobal;
             if (targetZone <= 0) return true; // Not in a valid zone
             
-            // Check if remote player has battery in this zone
-            var remoteState = MPManager.Instance.PlayerSync.GetFirstRemoteBatteryState();
-            if (remoteState != null && remoteState.LocationID == targetZone)
+            // Allow crank (1) and exit door (100) - each player has independent batteries
+            // and needs to use these stations. Only block puzzle stations (2-99) to prevent
+            // two players from powering the same puzzle simultaneously.
+            if (targetZone == 1 || targetZone >= 100) return true;
+            
+            // Check if ANY remote player has battery in this puzzle station (supports 3+ players)
+            var remoteState = MPManager.Instance.PlayerSync.GetRemoteBatteryAtLocation(targetZone);
+            if (remoteState != null)
             {
-                Plugin.Log.LogInfo($"[Battery] Blocked placing battery in zone {targetZone} - remote player already has battery there");
-                return false; // Block the placement
+                return false; // Block the placement - remote player already powering this puzzle
             }
             
             return true;
@@ -1742,63 +2689,133 @@ namespace Crawlspace2MP
     }
     
     // Detect player death and notify partner
+    // CRITICAL: Send death notifications IMMEDIATELY (when deathID == 0)
+    // This ensures notifications are sent even if the game is paused (VR headset off)
+    // The old code waited for deathID > 0, which happens in the coroutine AFTER WaitForSeconds
+    // If the game is paused, the coroutine never completes and the notification never sends
+    
+    // CRITICAL: All death patches use Prefix (not Postfix) because the death coroutines
+    // set deathID synchronously before the first yield. A Postfix would see deathID != 0
+    // and never send the death notification. Prefix runs BEFORE the method, when deathID is still 0.
+    
     [HarmonyPatch(typeof(jumpscareController), "onDeathClown")]
     public class DeathClownPatch
     {
-        static void Postfix(jumpscareController __instance)
+        static void Prefix(jumpscareController __instance)
         {
-            if (__instance.GetType().GetField("deathID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(__instance) is int deathID && deathID > 0)
-                MPManager.Instance?.PlayerSync?.SendDeathGhost(true, 1);
+            // Don't send death notification if already a ghost
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost) return;
+            
+            var deathIDField = __instance.GetType().GetField("deathID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (deathIDField != null)
+            {
+                int deathID = (int)deathIDField.GetValue(__instance);
+                if (deathID == 0)
+                {
+                    Plugin.Log.LogInfo("[Death] Clown killed player - sending death notification");
+                    MPManager.Instance?.PlayerSync?.SendDeathGhost(true, 1);
+                }
+            }
         }
     }
     
     [HarmonyPatch(typeof(jumpscareController), "onDeathHarold")]
     public class DeathHaroldPatch
     {
-        static void Postfix(jumpscareController __instance)
+        static void Prefix(jumpscareController __instance)
         {
-            if (__instance.GetType().GetField("deathID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(__instance) is int deathID && deathID > 0)
-                MPManager.Instance?.PlayerSync?.SendDeathGhost(true, 2);
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost) return;
+            
+            var deathIDField = __instance.GetType().GetField("deathID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (deathIDField != null)
+            {
+                int deathID = (int)deathIDField.GetValue(__instance);
+                if (deathID == 0)
+                {
+                    Plugin.Log.LogInfo("[Death] Harold killed player - sending death notification");
+                    MPManager.Instance?.PlayerSync?.SendDeathGhost(true, 2);
+                }
+            }
         }
     }
     
     [HarmonyPatch(typeof(jumpscareController), "onDeathSparky")]
     public class DeathSparkyPatch
     {
-        static void Postfix(jumpscareController __instance)
+        static void Prefix(jumpscareController __instance)
         {
-            if (__instance.GetType().GetField("deathID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(__instance) is int deathID && deathID > 0)
-                MPManager.Instance?.PlayerSync?.SendDeathGhost(true, 3);
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost) return;
+            
+            var deathIDField = __instance.GetType().GetField("deathID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (deathIDField != null)
+            {
+                int deathID = (int)deathIDField.GetValue(__instance);
+                if (deathID == 0)
+                {
+                    Plugin.Log.LogInfo("[Death] Sparky killed player - sending death notification");
+                    MPManager.Instance?.PlayerSync?.SendDeathGhost(true, 3);
+                }
+            }
         }
     }
     
     [HarmonyPatch(typeof(jumpscareController), "onDeathHenry")]
     public class DeathHenryPatch
     {
-        static void Postfix(jumpscareController __instance)
+        static void Prefix(jumpscareController __instance)
         {
-            if (__instance.GetType().GetField("deathID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(__instance) is int deathID && deathID > 0)
-                MPManager.Instance?.PlayerSync?.SendDeathGhost(true, 4);
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost) return;
+            
+            var deathIDField = __instance.GetType().GetField("deathID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (deathIDField != null)
+            {
+                int deathID = (int)deathIDField.GetValue(__instance);
+                if (deathID == 0)
+                {
+                    Plugin.Log.LogInfo("[Death] Henry killed player - sending death notification");
+                    MPManager.Instance?.PlayerSync?.SendDeathGhost(true, 4);
+                }
+            }
         }
     }
     
     [HarmonyPatch(typeof(jumpscareController), "onDeathSmiley")]
     public class DeathSmileyPatch
     {
-        static void Postfix(jumpscareController __instance)
+        static void Prefix(jumpscareController __instance)
         {
-            if (__instance.GetType().GetField("deathID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(__instance) is int deathID && deathID > 0)
-                MPManager.Instance?.PlayerSync?.SendDeathGhost(true, 5);
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost) return;
+            
+            var deathIDField = __instance.GetType().GetField("deathID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (deathIDField != null)
+            {
+                int deathID = (int)deathIDField.GetValue(__instance);
+                if (deathID == 0)
+                {
+                    Plugin.Log.LogInfo("[Death] Smiley killed player - sending death notification");
+                    MPManager.Instance?.PlayerSync?.SendDeathGhost(true, 5);
+                }
+            }
         }
     }
     
     [HarmonyPatch(typeof(jumpscareController), "onDeathJeff")]
     public class DeathJeffPatch
     {
-        static void Postfix(jumpscareController __instance)
+        static void Prefix(jumpscareController __instance)
         {
-            if (__instance.GetType().GetField("deathID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(__instance) is int deathID && deathID > 0)
-                MPManager.Instance?.PlayerSync?.SendDeathGhost(true, 6);
+            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost) return;
+            
+            var deathIDField = __instance.GetType().GetField("deathID", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (deathIDField != null)
+            {
+                int deathID = (int)deathIDField.GetValue(__instance);
+                if (deathID == 0)
+                {
+                    Plugin.Log.LogInfo("[Death] Jeff killed player - sending death notification");
+                    MPManager.Instance?.PlayerSync?.SendDeathGhost(true, 6);
+                }
+            }
         }
     }
     
@@ -1886,8 +2903,6 @@ namespace Crawlspace2MP
                 
                 Plugin.Log.LogInfo("Created friend indicator on minimap");
             }
-            
-            // Position the friend indicator using first remote player
             Vector3 friendWorldPos = remotePositions[0];
             Vector3 localPosition = new Vector3(
                 friendWorldPos.x * 15.4f + __instance.xOffest, 
@@ -1923,6 +2938,25 @@ namespace Crawlspace2MP
             
             // Check if remote player has battery at exit
             bool remoteAtExit = MPManager.Instance.PlayerSync.IsRemoteBatteryAtExit();
+            
+            // Check if door is already fully charged (either player charged it)
+            bool doorFullyCharged = false;
+            var timerField = typeof(LeaveDoorControl).GetField("doorLeaveTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (timerField != null)
+            {
+                int timer = (int)timerField.GetValue(__instance);
+                doorFullyCharged = timer >= __instance.doorLeaveRequiredTime && __instance.doorLeaveRequiredTime > 0;
+            }
+            
+            // If door is fully charged AND puzzles are done, keep it in the "ready" state
+            // regardless of whose battery is currently in the slot
+            if (doorFullyCharged && PuzzleMaster.totalCompletedPuzzles == PuzzleMaster.requiredPuzzles)
+            {
+                __instance.setYes();
+                if (__instance.doorLeaveHitbox != null)
+                    __instance.doorLeaveHitbox.SetActive(true);
+                return false;
+            }
             
             // If local player is at exit, run normal logic (it will charge and sync)
             if (localAtExit) return true;
@@ -1964,22 +2998,16 @@ namespace Crawlspace2MP
     {
         static bool Prefix(ref string sceneName)
         {
-            Plugin.Log.LogInfo($"[Ghost] SceneManager.LoadScene intercepted: sceneName={sceneName}, IsGhostSceneReload={PlayerSync.IsGhostSceneReload}");
-            
             // Only intercept if we're in multiplayer and ghost reload is pending
             if (!PlayerSync.IsGhostSceneReload) return true;
             
             var playerSync = MPManager.Instance?.PlayerSync;
-            if (playerSync == null)
-            {
-                Plugin.Log.LogWarning("[Ghost] PlayerSync is null, allowing normal scene load");
-                return true;
-            }
+            if (playerSync == null) return true;
             
             // Check if this is trying to load Home after death
             if (sceneName.Equals("Home", System.StringComparison.OrdinalIgnoreCase))
             {
-                Plugin.Log.LogInfo($"[Ghost] INTERCEPTING Home load! Reloading Night scene instead");
+                Plugin.Log.LogInfo("[Ghost] Intercepting Home load - reloading Night scene as ghost");
                 
                 // Clear the flag and let PlayerSync handle the reload
                 PlayerSync.IsGhostSceneReload = false;
@@ -1988,7 +3016,6 @@ namespace Crawlspace2MP
                 return false; // Don't load Home
             }
             
-            Plugin.Log.LogInfo($"[Ghost] Not intercepting - sceneName is not Home");
             return true; // Allow other scene loads
         }
     }
@@ -2007,24 +3034,15 @@ namespace Crawlspace2MP
             var playerSync = MPManager.Instance?.PlayerSync;
             if (playerSync != null && playerSync.IsLocalGhost)
             {
-                Plugin.Log.LogInfo("[Ghost] GhostJumpscareStartPatch - Re-enabling world after ghost reload");
+                Plugin.Log.LogInfo("[Ghost] Re-enabling world after ghost reload");
                 
                 // Re-enable world objects that death coroutines disabled
                 if (__instance.worldMaster != null)
-                {
                     __instance.worldMaster.SetActive(true);
-                    Plugin.Log.LogInfo("[Ghost]   worldMaster enabled");
-                }
                 if (__instance.leftHand != null)
-                {
                     __instance.leftHand.SetActive(true);
-                    Plugin.Log.LogInfo("[Ghost]   leftHand enabled");
-                }
                 if (__instance.rightHand != null)
-                {
                     __instance.rightHand.SetActive(true);
-                    Plugin.Log.LogInfo("[Ghost]   rightHand enabled");
-                }
                     
                 // Hide jumpscare elements
                 if (__instance.bkgGO != null)
@@ -2049,10 +3067,9 @@ namespace Crawlspace2MP
                 if (deathIDField != null)
                 {
                     deathIDField.SetValue(__instance, 0);
-                    Plugin.Log.LogInfo("[Ghost]   deathID reset to 0");
                 }
                 
-                Plugin.Log.LogInfo("[Ghost] GhostJumpscareStartPatch complete");
+                Plugin.Log.LogInfo("[Ghost] World re-enabled after ghost reload");
             }
         }
     }
@@ -2110,6 +3127,9 @@ namespace Crawlspace2MP
     
     // ==================== GHOST MONSTER IMMUNITY ====================
     // Ghosts can't be killed by monsters - they're already dead!
+    // CRITICAL: Check IsDyingThisFrame to avoid blocking the jumpscare on the INITIAL death.
+    // Without this, the death notification Prefix sets _localIsGhost=true, then the ghost block
+    // Prefix sees IsLocalGhost=true and cancels the original method - no jumpscare plays.
     
     [HarmonyPatch(typeof(jumpscareController), "onDeathClown")]
     public class GhostDeathClownBlockPatch
@@ -2117,11 +3137,8 @@ namespace Crawlspace2MP
         static bool Prefix()
         {
             var playerSync = MPManager.Instance?.PlayerSync;
-            if (playerSync != null && playerSync.IsLocalGhost)
-            {
-                Plugin.Log.LogInfo("[Ghost] Blocked death from Clown - ghosts are immune");
+            if (playerSync != null && playerSync.IsLocalGhost && !playerSync.IsDyingThisFrame)
                 return false;
-            }
             return true;
         }
     }
@@ -2132,11 +3149,8 @@ namespace Crawlspace2MP
         static bool Prefix()
         {
             var playerSync = MPManager.Instance?.PlayerSync;
-            if (playerSync != null && playerSync.IsLocalGhost)
-            {
-                Plugin.Log.LogInfo("[Ghost] Blocked death from Harold - ghosts are immune");
+            if (playerSync != null && playerSync.IsLocalGhost && !playerSync.IsDyingThisFrame)
                 return false;
-            }
             return true;
         }
     }
@@ -2147,11 +3161,8 @@ namespace Crawlspace2MP
         static bool Prefix()
         {
             var playerSync = MPManager.Instance?.PlayerSync;
-            if (playerSync != null && playerSync.IsLocalGhost)
-            {
-                Plugin.Log.LogInfo("[Ghost] Blocked death from Sparky - ghosts are immune");
+            if (playerSync != null && playerSync.IsLocalGhost && !playerSync.IsDyingThisFrame)
                 return false;
-            }
             return true;
         }
     }
@@ -2162,11 +3173,8 @@ namespace Crawlspace2MP
         static bool Prefix()
         {
             var playerSync = MPManager.Instance?.PlayerSync;
-            if (playerSync != null && playerSync.IsLocalGhost)
-            {
-                Plugin.Log.LogInfo("[Ghost] Blocked death from Henry - ghosts are immune");
+            if (playerSync != null && playerSync.IsLocalGhost && !playerSync.IsDyingThisFrame)
                 return false;
-            }
             return true;
         }
     }
@@ -2177,11 +3185,8 @@ namespace Crawlspace2MP
         static bool Prefix()
         {
             var playerSync = MPManager.Instance?.PlayerSync;
-            if (playerSync != null && playerSync.IsLocalGhost)
-            {
-                Plugin.Log.LogInfo("[Ghost] Blocked death from Smiley - ghosts are immune");
+            if (playerSync != null && playerSync.IsLocalGhost && !playerSync.IsDyingThisFrame)
                 return false;
-            }
             return true;
         }
     }
@@ -2192,11 +3197,8 @@ namespace Crawlspace2MP
         static bool Prefix()
         {
             var playerSync = MPManager.Instance?.PlayerSync;
-            if (playerSync != null && playerSync.IsLocalGhost)
-            {
-                Plugin.Log.LogInfo("[Ghost] Blocked death from Jeff - ghosts are immune");
+            if (playerSync != null && playerSync.IsLocalGhost && !playerSync.IsDyingThisFrame)
                 return false;
-            }
             return true;
         }
     }
@@ -2216,6 +3218,58 @@ namespace Crawlspace2MP
                 return false;
             }
             return true;
+        }
+    }
+    
+    /// <summary>
+    /// Ghost minimap - always visible without battery when in ghost mode
+    /// </summary>
+    [HarmonyPatch(typeof(MinimapControl), "FixedUpdate")]
+    public class GhostMinimapPatch
+    {
+        static bool Prefix(MinimapControl __instance)
+        {
+            var playerSync = MPManager.Instance?.PlayerSync;
+            if (playerSync == null || !playerSync.IsLocalGhost)
+                return true; // Not a ghost, run original
+            
+            // Ghost mode: force minimap always open
+            // Access private fields via reflection
+            var timerField = typeof(MinimapControl).GetField("timer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (timerField == null) return true;
+            
+            // Force timer to max (7 = fully open)
+            timerField.SetValue(__instance, 7);
+            
+            // Keep minimap active and update position
+            if (__instance.minimap != null)
+                __instance.minimap.SetActive(true);
+            
+            // Update player icon position
+            __instance.setMapIconPos();
+            
+            // Update minimap scale to fully open
+            if (__instance.minimapRect != null)
+                __instance.minimapRect.transform.localScale = new Vector3(1f, 1f, 1f);
+            
+            // Still update enemy indicator (Harold tracking)
+            if (__instance.enemyIndicator != null)
+            {
+                var haroldTimerField = typeof(MinimapControl).GetField("haroldTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (haroldTimerField != null)
+                {
+                    int haroldTimer = (int)haroldTimerField.GetValue(__instance);
+                    haroldTimer--;
+                    haroldTimerField.SetValue(__instance, haroldTimer);
+                    __instance.enemyIndicator.SetActive(haroldTimer > 0);
+                }
+            }
+            
+            // Set hand to transparent material (minimap is on the hand)
+            if (__instance.handmesh != null && __instance.handmatTrans != null)
+                __instance.handmesh.material = __instance.handmatTrans;
+            
+            return false; // Skip original
         }
     }
 }

@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>Crawlspace2MP.Preload</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <GamePath>D:\SteamLibrary\steamapps\common\Crawlspace 2</GamePath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Mono.Cecil" Version="0.11.5" />
+  </ItemGroup>
+
+  <!-- Copy patcher to Thunderstore folder -->
+  <Target Name="CopyToThunderstore" AfterTargets="Build">
+    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll"
+          DestinationFolder="..\Thunderstore\BepInEx\patchers\Crawlspace2MP\"
+          SkipUnchangedFiles="false" />
+    <Message Text="Copied patcher DLL to Thunderstore folder" Importance="high" />
+  </Target>
+
+  <!-- Copy patcher to game folder -->
+  <Target Name="CopyToGame" AfterTargets="Build">
+    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll"
+          DestinationFolder="$(GamePath)\BepInEx\patchers\Crawlspace2MP\"
+          SkipUnchangedFiles="false"
+          Condition="Exists('$(GamePath)\BepInEx')" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\Thunderstore\BepInEx\patchers\Crawlspace2MP\steam_api64.dll"
+          DestinationFolder="$(GamePath)\BepInEx\patchers\Crawlspace2MP\"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(GamePath)\BepInEx')" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\Thunderstore\BepInEx\patchers\Crawlspace2MP\steam_appid.txt"
+          DestinationFolder="$(GamePath)\BepInEx\patchers\Crawlspace2MP\"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(GamePath)\BepInEx')" />
+    <Message Text="Copied patcher to game folder" Importance="high" 
+             Condition="Exists('$(GamePath)')" />
+  </Target>
+
+</Project>

@@ -1,0 +1,9 @@
+{
+  "name": "Crawlspace2MP",
+  "version_number": "1.1.1",
+  "website_url": "",
+  "description": "Adds online multiplayer support to Crawlspace 2 using BepInEx.",
+  "dependencies": [
+    "BepInEx-BepInExPack-5.4.2304"
+  ]
+}

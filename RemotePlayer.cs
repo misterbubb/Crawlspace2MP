@@ -17,9 +17,25 @@ namespace Crawlspace2MP
         // Track if we're using real models or placeholders
         private bool _usingRealHands = false;
         
+        // Retry mechanism for hand mesh upgrade
+        private float _handUpgradeRetryTime = 0f;
+        private int _handUpgradeRetryCount = 0;
+        private const int MAX_HAND_UPGRADE_RETRIES = 100; // Increased from 30 - try for ~10 seconds
+        private const float HAND_UPGRADE_RETRY_INTERVAL = 0.1f;
+        
         // Ghost state
         private bool _isGhost = false;
         public bool IsGhost => _isGhost;
+        
+        // Hand pose state (for animation)
+        private float _targetLeftGrip = 0f;
+        private float _targetLeftTrigger = 0f;
+        private float _targetRightGrip = 0f;
+        private float _targetRightTrigger = 0f;
+        private Animator _leftHandAnimator;
+        private Animator _rightHandAnimator;
+        private int _animParamFlex = -1;
+        private int _animParamPinch = -1;
         
         private bool _isStanding;
         private Vector3 _targetHeadPos;
@@ -91,208 +107,58 @@ namespace Crawlspace2MP
         
         private void SetupHandVisuals()
         {
-            // The game's hand meshes are at:
-            // BackpackControl.leftHand -> offsettu -> customhandleft
-            // OR inside OVR's "[LeftHand Controller] Model Parent" for Quest hands
+            // Try to find hand meshes immediately, fall back to spheres if not ready
+            // The upgrade retry system will keep trying to find real hands
             
             GameObject leftHandSource = null;
             GameObject rightHandSource = null;
             
-            var backpack = Object.FindObjectOfType<BackpackControl>();
-            if (backpack == null)
+            // Search the entire scene for hand objects by name
+            var allTransforms = Object.FindObjectsOfType<Transform>(true);
+            foreach (var t in allTransforms)
             {
-                Plugin.Log.LogWarning($"[RemotePlayer {PeerId}] BackpackControl not found! Using fallback hands.");
-                CreateFallbackHands();
-                return;
-            }
-            
-            Plugin.LogDebug($"[RemotePlayer {PeerId}] BackpackControl found. leftHand={backpack.leftHand != null}, rightHand={backpack.rightHand != null}");
-            
-            // DEBUG: Log full hierarchy of both hands (only in debug builds)
-            Plugin.LogDebug($"[RemotePlayer {PeerId}] === LEFT HAND HIERARCHY ===");
-            if (backpack.leftHand != null)
-            {
-                LogHandHierarchyDetailed(backpack.leftHand.transform, 0);
-            }
-            
-            Plugin.LogDebug($"[RemotePlayer {PeerId}] === RIGHT HAND HIERARCHY ===");
-            if (backpack.rightHand != null)
-            {
-                LogHandHierarchyDetailed(backpack.rightHand.transform, 0);
-            }
-            
-            // Left hand - try specific path first
-            if (backpack.leftHand != null)
-            {
-                var offsettu = backpack.leftHand.transform.Find("offsettu");
-                if (offsettu != null)
+                if (t.name == "CustomHandLeft" && leftHandSource == null)
                 {
-                    var customHand = offsettu.Find("customhandleft");
-                    if (customHand != null)
-                    {
-                        leftHandSource = customHand.gameObject;
-                        Plugin.LogDebug($"[RemotePlayer {PeerId}] Found left hand at specific path: customhandleft");
-                    }
+                    var parent = t.parent;
+                    if (parent != null && parent.name.ToLower().Contains("offsettu"))
+                        leftHandSource = parent.gameObject;
+                    else
+                        leftHandSource = t.gameObject;
                 }
-                
-                // Try OVR Model Parent path (Quest hands)
-                if (leftHandSource == null)
+                else if (t.name == "CustomHandRight" && rightHandSource == null)
                 {
-                    var modelParent = backpack.leftHand.transform.Find("[LeftHand Controller] Model Parent");
-                    if (modelParent != null)
-                    {
-                        Plugin.LogDebug($"[RemotePlayer {PeerId}] Found [LeftHand Controller] Model Parent, searching for renderers...");
-                        // Search for any mesh renderer inside Model Parent
-                        foreach (var renderer in modelParent.GetComponentsInChildren<Renderer>(true))
-                        {
-                            Plugin.LogDebug($"[RemotePlayer {PeerId}]   Model Parent renderer: {renderer.gameObject.name}, type={renderer.GetType().Name}, active={renderer.gameObject.activeInHierarchy}, enabled={renderer.enabled}");
-                            if (leftHandSource == null)
-                            {
-                                leftHandSource = renderer.gameObject;
-                                Plugin.LogDebug($"[RemotePlayer {PeerId}] Using as left hand source: {renderer.gameObject.name}");
-                            }
-                        }
-                    }
-                }
-                
-                // Fallback: search for any skinned mesh renderer in the hand hierarchy
-                if (leftHandSource == null)
-                {
-                    foreach (var smr in backpack.leftHand.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-                    {
-                        if (!smr.gameObject.name.ToLower().Contains("battery") && 
-                            !smr.gameObject.name.ToLower().Contains("energy"))
-                        {
-                            leftHandSource = smr.gameObject;
-                            Plugin.LogDebug($"[RemotePlayer {PeerId}] Found left hand via SkinnedMeshRenderer: {smr.gameObject.name}");
-                            break;
-                        }
-                    }
-                }
-                
-                // Last resort: any MeshRenderer
-                if (leftHandSource == null)
-                {
-                    foreach (var mr in backpack.leftHand.GetComponentsInChildren<MeshRenderer>(true))
-                    {
-                        if (!mr.gameObject.name.ToLower().Contains("battery") && 
-                            !mr.gameObject.name.ToLower().Contains("energy") &&
-                            !mr.gameObject.name.ToLower().Contains("indicator"))
-                        {
-                            leftHandSource = mr.gameObject;
-                            Plugin.LogDebug($"[RemotePlayer {PeerId}] Found left hand via MeshRenderer: {mr.gameObject.name}");
-                            break;
-                        }
-                    }
+                    var parent = t.parent;
+                    if (parent != null && parent.name.ToLower().Contains("offsettu"))
+                        rightHandSource = parent.gameObject;
+                    else
+                        rightHandSource = t.gameObject;
                 }
             }
             
-            // Right hand - try specific path first
-            if (backpack.rightHand != null)
-            {
-                var offsettu = backpack.rightHand.transform.Find("offsettu");
-                if (offsettu != null)
-                {
-                    var customHand = offsettu.Find("customhandright");
-                    if (customHand != null)
-                    {
-                        rightHandSource = customHand.gameObject;
-                        Plugin.LogDebug($"[RemotePlayer {PeerId}] Found right hand at specific path: customhandright");
-                    }
-                }
-                
-                // Try OVR Model Parent path (Quest hands)
-                if (rightHandSource == null)
-                {
-                    var modelParent = backpack.rightHand.transform.Find("[RightHand Controller] Model Parent");
-                    if (modelParent != null)
-                    {
-                        Plugin.LogDebug($"[RemotePlayer {PeerId}] Found [RightHand Controller] Model Parent, searching for renderers...");
-                        // Search for any mesh renderer inside Model Parent
-                        foreach (var renderer in modelParent.GetComponentsInChildren<Renderer>(true))
-                        {
-                            Plugin.LogDebug($"[RemotePlayer {PeerId}]   Model Parent renderer: {renderer.gameObject.name}, type={renderer.GetType().Name}, active={renderer.gameObject.activeInHierarchy}, enabled={renderer.enabled}");
-                            if (rightHandSource == null)
-                            {
-                                rightHandSource = renderer.gameObject;
-                                Plugin.LogDebug($"[RemotePlayer {PeerId}] Using as right hand source: {renderer.gameObject.name}");
-                            }
-                        }
-                    }
-                }
-                
-                // Fallback: search for any skinned mesh renderer in the hand hierarchy
-                if (rightHandSource == null)
-                {
-                    foreach (var smr in backpack.rightHand.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-                    {
-                        if (!smr.gameObject.name.ToLower().Contains("battery") && 
-                            !smr.gameObject.name.ToLower().Contains("energy"))
-                        {
-                            rightHandSource = smr.gameObject;
-                            Plugin.LogDebug($"[RemotePlayer {PeerId}] Found right hand via SkinnedMeshRenderer: {smr.gameObject.name}");
-                            break;
-                        }
-                    }
-                }
-                
-                // Last resort: any MeshRenderer
-                if (rightHandSource == null)
-                {
-                    foreach (var mr in backpack.rightHand.GetComponentsInChildren<MeshRenderer>(true))
-                    {
-                        if (!mr.gameObject.name.ToLower().Contains("battery") && 
-                            !mr.gameObject.name.ToLower().Contains("energy") &&
-                            !mr.gameObject.name.ToLower().Contains("indicator"))
-                        {
-                            rightHandSource = mr.gameObject;
-                            Plugin.LogDebug($"[RemotePlayer {PeerId}] Found right hand via MeshRenderer: {mr.gameObject.name}");
-                            break;
-                        }
-                    }
-                }
-            }
-            
-            // Clone the hand meshes if found
+            // Verify renderers exist
             if (leftHandSource != null && rightHandSource != null)
             {
-                LeftHand = CloneHandMesh(leftHandSource, $"RemotePlayer_{PeerId}_LeftHand");
-                RightHand = CloneHandMesh(rightHandSource, $"RemotePlayer_{PeerId}_RightHand");
-                _usingRealHands = true;
-                Plugin.LogDebug($"[RemotePlayer {PeerId}] Cloned hand models from: L={leftHandSource.name}, R={rightHandSource.name}");
-                return;
+                bool hasLeftRenderer = leftHandSource.GetComponentInChildren<Renderer>(true) != null;
+                bool hasRightRenderer = rightHandSource.GetComponentInChildren<Renderer>(true) != null;
+                
+                if (hasLeftRenderer && hasRightRenderer)
+                {
+                    LeftHand = CloneHandMesh(leftHandSource, $"RemotePlayer_{PeerId}_LeftHand");
+                    RightHand = CloneHandMesh(rightHandSource, $"RemotePlayer_{PeerId}_RightHand");
+                    _usingRealHands = true;
+                    Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Cloned hand models from: L={leftHandSource.name}, R={rightHandSource.name}");
+                    TryFindHandAnimators();
+                    return;
+                }
             }
             
-            Plugin.LogDebug($"[RemotePlayer {PeerId}] Could not find hand meshes, using fallback spheres");
+            Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Hand meshes not ready yet (L={leftHandSource != null}, R={rightHandSource != null}) - using fallback, will retry");
             CreateFallbackHands();
         }
         
         private void LogHandHierarchyDetailed(Transform parent, int depth)
         {
-            string indent = new string(' ', depth * 2);
-            
-            // Get component info
-            var renderer = parent.GetComponent<Renderer>();
-            var smr = parent.GetComponent<SkinnedMeshRenderer>();
-            var mr = parent.GetComponent<MeshRenderer>();
-            var mf = parent.GetComponent<MeshFilter>();
-            
-            string components = "";
-            if (smr != null) components += "[SkinnedMeshRenderer] ";
-            if (mr != null) components += "[MeshRenderer] ";
-            if (mf != null) components += "[MeshFilter] ";
-            if (renderer != null && smr == null && mr == null) components += $"[{renderer.GetType().Name}] ";
-            
-            Plugin.LogDebug($"[Hand] {indent}{parent.name} {components}active={parent.gameObject.activeSelf}");
-            
-            // Only go 4 levels deep to avoid spam
-            if (depth < 4)
-            {
-                foreach (Transform child in parent)
-                {
-                    LogHandHierarchyDetailed(child, depth + 1);
-                }
-            }
+            // Debug only - intentionally empty in release
         }
         
         private GameObject FindChildByNameContains(Transform parent, string nameContains)
@@ -300,23 +166,17 @@ namespace Crawlspace2MP
             foreach (Transform child in parent.GetComponentsInChildren<Transform>(true))
             {
                 if (child.name.ToLower().Contains(nameContains.ToLower()))
-                {
-                    Plugin.LogDebug($"[RemotePlayer {PeerId}] FindChildByNameContains found: {child.name}");
                     return child.gameObject;
-                }
             }
             return null;
         }
         
         private GameObject FindHandMeshInChildren(Transform parent, string handSide)
         {
-            Plugin.LogDebug($"[RemotePlayer {PeerId}] Searching children of {parent.name} for {handSide} hand mesh...");
-            
             // Search all descendants for a mesh renderer
             foreach (var renderer in parent.GetComponentsInChildren<Renderer>(true))
             {
                 string nameLower = renderer.gameObject.name.ToLower();
-                Plugin.LogDebug($"[RemotePlayer {PeerId}]   Found renderer: {renderer.gameObject.name}");
                 
                 // Skip if it's clearly not a hand (like UI elements)
                 if (nameLower.Contains("ui") || nameLower.Contains("canvas") || nameLower.Contains("text"))
@@ -325,20 +185,14 @@ namespace Crawlspace2MP
                 // If it has "hand" in name or is a skinned mesh, it's likely the hand
                 if (nameLower.Contains("hand") || nameLower.Contains("palm") || nameLower.Contains("glove") ||
                     renderer is SkinnedMeshRenderer)
-                {
-                    Plugin.LogDebug($"[RemotePlayer {PeerId}]   -> Using as {handSide} hand mesh!");
                     return renderer.gameObject;
-                }
             }
             
             // If no specific hand mesh found, try to find any mesh that's not a controller model
             foreach (var renderer in parent.GetComponentsInChildren<Renderer>(true))
             {
                 if (renderer is SkinnedMeshRenderer || renderer.GetComponent<MeshFilter>() != null)
-                {
-                    Plugin.LogDebug($"[RemotePlayer {PeerId}]   -> Fallback: using {renderer.gameObject.name} as {handSide} hand");
                     return renderer.gameObject;
-                }
             }
             
             return null;
@@ -349,18 +203,13 @@ namespace Crawlspace2MP
             var clone = Object.Instantiate(source);
             clone.name = newName;
             
-            // Log the full hierarchy of what we cloned (debug only)
-            Plugin.LogDebug($"[RemotePlayer] Cloned hand hierarchy for {newName}:");
-            foreach (Transform child in clone.GetComponentsInChildren<Transform>(true))
-            {
-                Plugin.LogDebug($"[RemotePlayer]   - {child.name} (active={child.gameObject.activeSelf})");
-            }
-            
             // Remove any scripts that might interfere
             var handScript = clone.GetComponent<Hand>();
             if (handScript != null) Object.Destroy(handScript);
             
-            // Remove all MonoBehaviours that might interfere (but keep the GameObject structure)
+            // Remove MonoBehaviours that might interfere, but KEEP Animators (needed for hand pose sync)
+            // Note: Animator inherits from Behaviour, not MonoBehaviour, so it won't be in this loop.
+            // We explicitly preserve Animator by not destroying it separately.
             foreach (var mb in clone.GetComponentsInChildren<MonoBehaviour>())
             {
                 Object.Destroy(mb);
@@ -382,7 +231,6 @@ namespace Crawlspace2MP
                     nameLower.Contains("leftcollider") || nameLower.Contains("rightcollider") ||
                     nameLower.Contains("coll_hands"))
                 {
-                    Plugin.LogDebug($"[RemotePlayer] Disabling visual/collider: {child.name}");
                     child.gameObject.SetActive(false);
                 }
                 
@@ -391,14 +239,12 @@ namespace Crawlspace2MP
                 // The actual battery model is called "handEnergyCell"
                 if (nameLower.Contains("battery") || nameLower.Contains("energycell"))
                 {
-                    Plugin.LogDebug($"[RemotePlayer] Destroying cloned battery/energycell from hand: {child.name}");
                     Object.Destroy(child.gameObject);
                 }
                 
                 // Destroy Canvas (UI elements like minimap, icons) - we don't need these on remote player
                 if (nameLower == "canvas")
                 {
-                    Plugin.LogDebug($"[RemotePlayer] Destroying cloned Canvas from hand: {child.name}");
                     Object.Destroy(child.gameObject);
                 }
             }
@@ -413,7 +259,6 @@ namespace Crawlspace2MP
                     // Skip the actual hand mesh
                     if (!nameLower.Contains("hand") && !nameLower.Contains("geom"))
                     {
-                        Plugin.LogDebug($"[RemotePlayer] Disabling small renderer (possible indicator): {renderer.gameObject.name}, size={renderer.bounds.size.magnitude}");
                         renderer.enabled = false;
                     }
                 }
@@ -447,7 +292,6 @@ namespace Crawlspace2MP
             SetColor(RightHand, new Color(0f, 0.8f, 1f, 0.8f)); // Cyan
             
             _usingRealHands = false;
-            Plugin.LogDebug($"[RemotePlayer {PeerId}] Using fallback hand spheres");
         }
         
         private void SetupFlashlight()
@@ -513,7 +357,7 @@ namespace Crawlspace2MP
                 foreach (var renderer in RightBattery.GetComponentsInChildren<Renderer>(true))
                     renderer.enabled = false;
                 
-                Plugin.LogDebug($"[RemotePlayer {PeerId}] Cloned battery models - L.active={LeftBattery.activeSelf}, R.active={RightBattery.activeSelf}");
+                Plugin.LogDebug($"[RemotePlayer {PeerId}] Cloned battery models");
             }
             else
             {
@@ -535,15 +379,79 @@ namespace Crawlspace2MP
                 Object.Destroy(RightBattery.GetComponent<Collider>());
                 SetColor(RightBattery, new Color(1f, 0.5f, 0f));
                 RightBattery.SetActive(false);
-                
-                Plugin.LogDebug($"[RemotePlayer {PeerId}] Created fallback battery cubes");
             }
         }
         
         // Called after scene load to try upgrading placeholder visuals to real ones
         public void TryUpgradeVisuals()
         {
+            // Reset retry counter on scene load to give it a fresh chance
+            _handUpgradeRetryCount = 0;
+            _handUpgradeRetryTime = Time.time;
+            
             TryUpgradeHandVisuals();
+        }
+        
+        // Called from UpdateInterpolation to keep retrying hand upgrade
+        private void TryHandUpgradeWithRetry()
+        {
+            if (_usingRealHands) return; // Already using real hands
+            
+            // Give up after max retries
+            if (_handUpgradeRetryCount >= MAX_HAND_UPGRADE_RETRIES)
+            {
+                // Log once when we give up
+                if (_handUpgradeRetryCount == MAX_HAND_UPGRADE_RETRIES)
+                {
+                    Plugin.Log.LogWarning($"[RemotePlayer {PeerId}] Hand upgrade failed after {MAX_HAND_UPGRADE_RETRIES} attempts - using fallback spheres");
+                    _handUpgradeRetryCount++; // Increment so we don't log again
+                }
+                return;
+            }
+            
+            // Only retry every HAND_UPGRADE_RETRY_INTERVAL seconds
+            if (Time.time - _handUpgradeRetryTime < HAND_UPGRADE_RETRY_INTERVAL) return;
+            
+            _handUpgradeRetryTime = Time.time;
+            _handUpgradeRetryCount++;
+            
+            // Log first attempt and every 10th attempt
+            if (_handUpgradeRetryCount == 1 || _handUpgradeRetryCount % 10 == 0)
+            {
+                Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Hand upgrade retry {_handUpgradeRetryCount}/{MAX_HAND_UPGRADE_RETRIES}");
+            }
+            
+            TryUpgradeHandVisuals();
+        }
+        
+        private void TryFindHandAnimators()
+        {
+            // Try to find Animator components on the hand objects
+            if (LeftHand != null && _leftHandAnimator == null)
+            {
+                _leftHandAnimator = LeftHand.GetComponentInChildren<Animator>();
+                if (_leftHandAnimator != null)
+                {
+                    Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Found left hand Animator");
+                }
+            }
+            
+            if (RightHand != null && _rightHandAnimator == null)
+            {
+                _rightHandAnimator = RightHand.GetComponentInChildren<Animator>();
+                if (_rightHandAnimator != null)
+                {
+                    Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Found right hand Animator");
+                }
+            }
+            
+            // Cache animator parameter hashes
+            if ((_leftHandAnimator != null || _rightHandAnimator != null) && _animParamFlex == -1)
+            {
+                _animParamFlex = Animator.StringToHash("Flex");
+                _animParamPinch = Animator.StringToHash("Pinch");
+                Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Cached animator parameters (Flex={_animParamFlex}, Pinch={_animParamPinch})");
+            }
         }
         
         private void TryUpgradeHandVisuals()
@@ -553,78 +461,102 @@ namespace Crawlspace2MP
             GameObject leftHandSource = null;
             GameObject rightHandSource = null;
             
-            // Try Hand components first
-            var hands = Object.FindObjectsOfType<Hand>();
-            if (hands.Length >= 2)
+            // Strategy: Search the ENTIRE SCENE for hand mesh objects by name
+            // The hand hierarchy is: offsettu -> CustomHandLeft -> (unnamed) -> l_hand_skeletal_lowres
+            // But these may not be children of BackpackControl.leftHand
+            
+            // Search for CustomHandLeft/CustomHandRight first (most reliable)
+            var allTransforms = Object.FindObjectsOfType<Transform>(true);
+            foreach (var t in allTransforms)
             {
-                foreach (var hand in hands)
+                if (t.name == "CustomHandLeft" && leftHandSource == null)
                 {
-                    string nameLower = hand.gameObject.name.ToLower();
-                    if (nameLower.Contains("left") || nameLower.Contains("l_"))
-                        leftHandSource = hand.gameObject;
-                    else if (nameLower.Contains("right") || nameLower.Contains("r_"))
-                        rightHandSource = hand.gameObject;
+                    var parent = t.parent;
+                    if (parent != null && parent.name.ToLower().Contains("offsettu"))
+                        leftHandSource = parent.gameObject;
+                    else
+                        leftHandSource = t.gameObject;
                 }
-                
-                if (leftHandSource == null || rightHandSource == null)
+                else if (t.name == "CustomHandRight" && rightHandSource == null)
                 {
-                    leftHandSource = hands[0].gameObject;
-                    rightHandSource = hands[1].gameObject;
+                    var parent = t.parent;
+                    if (parent != null && parent.name.ToLower().Contains("offsettu"))
+                        rightHandSource = parent.gameObject;
+                    else
+                        rightHandSource = t.gameObject;
                 }
             }
             
-            // Try BackpackControl children
+            // Fallback: search for l_hand_skeletal_lowres / r_hand_skeletal_lowres
+            if (leftHandSource == null || rightHandSource == null)
+            {
+                foreach (var t in allTransforms)
+                {
+                    string nameLower = t.name.ToLower();
+                    if (nameLower.Contains("l_hand_skeletal") && leftHandSource == null)
+                        leftHandSource = t.gameObject;
+                    else if (nameLower.Contains("r_hand_skeletal") && rightHandSource == null)
+                        rightHandSource = t.gameObject;
+                }
+            }
+            
+            // Fallback: try BackpackControl path
             if (leftHandSource == null || rightHandSource == null)
             {
                 var backpack = Object.FindObjectOfType<BackpackControl>();
                 if (backpack != null)
                 {
-                    // Try OVR Model Parent first (Quest hands)
-                    if (backpack.leftHand != null && leftHandSource == null)
+                    if (leftHandSource == null && backpack.leftHand != null)
                     {
-                        var modelParent = backpack.leftHand.transform.Find("[LeftHand Controller] Model Parent");
-                        if (modelParent != null)
+                        var offsettu = backpack.leftHand.transform.Find("offsettu");
+                        if (offsettu != null)
+                            leftHandSource = offsettu.gameObject;
+                        else
                         {
-                            foreach (var renderer in modelParent.GetComponentsInChildren<Renderer>(true))
-                            {
-                                if (renderer.gameObject.activeInHierarchy || renderer.enabled)
-                                {
-                                    leftHandSource = renderer.gameObject;
-                                    Plugin.LogDebug($"[RemotePlayer {PeerId}] TryUpgrade: Found left hand in OVR Model Parent: {renderer.gameObject.name}");
-                                    break;
-                                }
-                            }
+                            var smr = backpack.leftHand.GetComponentInChildren<SkinnedMeshRenderer>(true);
+                            if (smr != null)
+                                leftHandSource = smr.gameObject;
                         }
                     }
-                    
-                    if (backpack.rightHand != null && rightHandSource == null)
+                    if (rightHandSource == null && backpack.rightHand != null)
                     {
-                        var modelParent = backpack.rightHand.transform.Find("[RightHand Controller] Model Parent");
-                        if (modelParent != null)
+                        var offsettu = backpack.rightHand.transform.Find("offsettu");
+                        if (offsettu != null)
+                            rightHandSource = offsettu.gameObject;
+                        else
                         {
-                            foreach (var renderer in modelParent.GetComponentsInChildren<Renderer>(true))
-                            {
-                                if (renderer.gameObject.activeInHierarchy || renderer.enabled)
-                                {
-                                    rightHandSource = renderer.gameObject;
-                                    Plugin.LogDebug($"[RemotePlayer {PeerId}] TryUpgrade: Found right hand in OVR Model Parent: {renderer.gameObject.name}");
-                                    break;
-                                }
-                            }
+                            var smr = backpack.rightHand.GetComponentInChildren<SkinnedMeshRenderer>(true);
+                            if (smr != null)
+                                rightHandSource = smr.gameObject;
                         }
                     }
-                    
-                    // Fallback to FindHandMeshInChildren
-                    if (backpack.leftHand != null && leftHandSource == null)
-                        leftHandSource = FindHandMeshInChildren(backpack.leftHand.transform, "left");
-                    if (backpack.rightHand != null && rightHandSource == null)
-                        rightHandSource = FindHandMeshInChildren(backpack.rightHand.transform, "right");
                 }
             }
             
-            if (leftHandSource == null || rightHandSource == null) return;
+            // Last resort: find any HandAnim components in the scene
+            if (leftHandSource == null || rightHandSource == null)
+            {
+                var handAnims = Object.FindObjectsOfType<HandAnim>(true);
+                foreach (var ha in handAnims)
+                {
+                    string nameLower = ha.gameObject.name.ToLower();
+                    if ((nameLower.Contains("left") || nameLower.Contains("l_")) && leftHandSource == null)
+                        leftHandSource = ha.gameObject;
+                    else if ((nameLower.Contains("right") || nameLower.Contains("r_")) && rightHandSource == null)
+                        rightHandSource = ha.gameObject;
+                }
+            }
             
-            Plugin.LogDebug($"[RemotePlayer {PeerId}] Upgrading placeholder hands to real models");
+            if (leftHandSource == null || rightHandSource == null)
+                return;
+            
+            // Verify the source has renderers before proceeding
+            bool hasLeftRenderer = leftHandSource.GetComponentInChildren<Renderer>(true) != null;
+            bool hasRightRenderer = rightHandSource.GetComponentInChildren<Renderer>(true) != null;
+            if (!hasLeftRenderer || !hasRightRenderer)
+                return;
+            
+            Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Upgrading placeholder hands to real models (L={leftHandSource.name}, R={rightHandSource.name})");
             
             // Save current positions
             Vector3 leftPos = LeftHand.transform.position;
@@ -655,7 +587,10 @@ namespace Crawlspace2MP
             if (RightBattery != null) RightBattery.transform.SetParent(RightHand.transform);
             
             _usingRealHands = true;
-            Plugin.LogDebug($"[RemotePlayer {PeerId}] Hand visuals upgraded to real models");
+            Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Hand visuals upgraded to real models");
+            
+            // Try to find animators on the new hands
+            TryFindHandAnimators();
         }
 
         private void SetColor(GameObject obj, Color color)
@@ -685,14 +620,15 @@ namespace Crawlspace2MP
             }
             else
             {
-                Plugin.LogDebug($"No renderer on {obj.name}");
+                // No renderer on this object
             }
         }
 
         public void SetTargets(bool isStanding, Vector3 bodyPos, Quaternion bodyRot, 
                                Vector3 headPos, Quaternion headRot,
                                Vector3 leftHandPos, Quaternion leftHandRot,
-                               Vector3 rightHandPos, Quaternion rightHandRot)
+                               Vector3 rightHandPos, Quaternion rightHandRot,
+                               float leftGrip, float leftTrigger, float rightGrip, float rightTrigger)
         {
             _isStanding = isStanding;
             _targetHeadPos = headPos;
@@ -702,10 +638,15 @@ namespace Crawlspace2MP
             _targetRightHandPos = rightHandPos;
             _targetRightHandRot = rightHandRot;
             
+            // Store hand pose targets
+            _targetLeftGrip = leftGrip;
+            _targetLeftTrigger = leftTrigger;
+            _targetRightGrip = rightGrip;
+            _targetRightTrigger = rightTrigger;
+            
             if (!_hasReceivedData)
             {
                 _hasReceivedData = true;
-                Plugin.LogDebug($"[RemotePlayer {PeerId}] First data! Head={headPos}, LHand={leftHandPos}, RHand={rightHandPos}");
                 
                 // Snap to position immediately on first data
                 Head.transform.position = headPos;
@@ -724,6 +665,27 @@ namespace Crawlspace2MP
             
             _logCounter++;
             
+            // Try to upgrade hand visuals if still using placeholders
+            TryHandUpgradeWithRetry();
+            
+            // Try to find hand animators if we haven't yet
+            if (_animParamFlex == -1 && _usingRealHands)
+            {
+                TryFindHandAnimators();
+            }
+            
+            // Apply hand poses to animators
+            if (_leftHandAnimator != null && _animParamFlex != -1)
+            {
+                _leftHandAnimator.SetFloat(_animParamFlex, _targetLeftGrip);
+                _leftHandAnimator.SetFloat(_animParamPinch, _targetLeftTrigger);
+            }
+            if (_rightHandAnimator != null && _animParamFlex != -1)
+            {
+                _rightHandAnimator.SetFloat(_animParamFlex, _targetRightGrip);
+                _rightHandAnimator.SetFloat(_animParamPinch, _targetRightTrigger);
+            }
+            
             // Use much faster interpolation
             float t = Mathf.Clamp01(Time.deltaTime * _lerpSpeed);
             
@@ -738,9 +700,6 @@ namespace Crawlspace2MP
                 LeftHand.transform.rotation = _targetLeftHandRot;
                 RightHand.transform.position = _targetRightHandPos;
                 RightHand.transform.rotation = _targetRightHandRot;
-                
-                if (_logCounter % 60 == 0)
-                    Plugin.LogDebug($"[RemotePlayer {PeerId}] SNAPPED (dist={headDist:F2})");
                 return;
             }
             
@@ -754,12 +713,6 @@ namespace Crawlspace2MP
             LeftHand.transform.rotation = Quaternion.Slerp(LeftHand.transform.rotation, _targetLeftHandRot, handT);
             RightHand.transform.position = Vector3.Lerp(RightHand.transform.position, _targetRightHandPos, handT);
             RightHand.transform.rotation = Quaternion.Slerp(RightHand.transform.rotation, _targetRightHandRot, handT);
-            
-            // Log occasionally with hand positions
-            if (_logCounter % 300 == 0)
-            {
-                Plugin.LogDebug($"[RemotePlayer {PeerId}] Head={Head.transform.position}, LHand={LeftHand.transform.position}, RHand={RightHand.transform.position}");
-            }
         }
 
         public void SetFlashlightState(bool isOn)
@@ -772,7 +725,6 @@ namespace Crawlspace2MP
             {
                 FlashlightCone.SetActive(isOn);
             }
-            Plugin.LogDebug($"[RemotePlayer {PeerId}] Flashlight set to {isOn}");
         }
         
         public void SetBatteryState(bool leftHolding, bool rightHolding)
@@ -791,8 +743,6 @@ namespace Crawlspace2MP
                 foreach (var renderer in RightBattery.GetComponentsInChildren<Renderer>(true))
                     renderer.enabled = rightHolding;
             }
-            
-            Plugin.LogDebug($"[RemotePlayer {PeerId}] Battery state: L={leftHolding}, R={rightHolding}");
         }
         
         public void SetGhostState(bool isGhost)
@@ -807,8 +757,6 @@ namespace Crawlspace2MP
             SetObjectTransparency(FaceIndicator, alpha);
             SetObjectTransparency(LeftHand, alpha);
             SetObjectTransparency(RightHand, alpha);
-            
-            Plugin.LogDebug($"[RemotePlayer {PeerId}] Ghost state set to {isGhost} (alpha={alpha})");
         }
         
         private void SetObjectTransparency(GameObject obj, float alpha)

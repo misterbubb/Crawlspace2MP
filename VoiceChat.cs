@@ -265,7 +265,7 @@ namespace Crawlspace2MP
         private float _resampleRatio;
         
         // Jitter buffer: don't start playing until we have enough data
-        private const float JITTER_BUFFER_MS = 100f; // 100ms jitter buffer
+        private const float JITTER_BUFFER_MS = 50f; // 50ms jitter buffer (lower latency)
         private int _jitterBufferSamples;
         private bool _isPlaying = false;
         

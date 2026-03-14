@@ -532,12 +532,18 @@ namespace Crawlspace2MP
             var sendType = reliable ? P2PSend.Reliable : P2PSend.Unreliable;
             bool sent = SteamNetworking.SendP2PPacket(target, data, data.Length, 0, sendType);
             
-            // Log send failures (but not too often for position updates)
+            // Log send failures (rate-limited to avoid log spam when peer disconnects)
             if (!sent && data.Length > 0 && data[0] != 1) // 1 = position packet
             {
-                Plugin.Log.LogWarning($"Failed to send P2P packet to {target}, type={data[0]}, reliable={reliable}");
+                _sendFailCount++;
+                if (_sendFailCount <= 3 || _sendFailCount % 100 == 0)
+                {
+                    Plugin.Log.LogWarning($"Failed to send P2P packet to {target}, type={data[0]}, reliable={reliable}" +
+                        (_sendFailCount > 3 ? $" (x{_sendFailCount})" : ""));
+                }
             }
         }
+        private int _sendFailCount = 0;
         
         private void ReceiveP2PMessages()
         {
@@ -643,6 +649,9 @@ namespace Crawlspace2MP
             _peerIdToSteamId[peerId] = steamId;
             
             Plugin.Log.LogInfo($"Accepted P2P from {steamId} as peer {peerId}, total peers: {_connectedPeers.Count}");
+            
+            // Reset send fail counter on new connection
+            _sendFailCount = 0;
             
             // Send version check to initiate P2P connection
             SendVersionCheck(steamId);

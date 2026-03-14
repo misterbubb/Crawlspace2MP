@@ -1,6 +1,8 @@
 # Build outputs
 bin/
 obj/
+Preloader/bin/
+Preloader/obj/
 
 # NuGet
 *.nupkg
@@ -15,8 +17,6 @@ packages/
 *.userprefs
 *.sln.docstates
 *.csproj.user
-
-# Rider
 .idea/
 
 # OS files
@@ -26,26 +26,22 @@ desktop.ini
 
 # Logs
 *.log
-LogOutput.log
 
-# Unity Library (if any Unity project is added later)
-Library/
-Temp/
-Build/
+# Decompiled game project (reference only, do NOT commit)
+crawlspace2decompiledunityproject/
+Assembly-CSharp/
 
-# Asset bundles (keep the source, not built bundles)
-*.bundle
+# Game DLLs (users must source these themselves — see lib/README.md)
+lib/*.dll
+!lib/.gitkeep
+
+# Built asset bundles
+mpassets
+
+# Thunderstore built artifacts (DLLs, bundles, zips)
+Thunderstore/BepInEx/
+Thunderstore/*.zip
 
 # Local testing
 local/
 test/
-
-# Game DLLs (users must copy these themselves)
-lib/*.dll
-
-# Keep the lib folder structure
-!lib/.gitkeep
-!lib/README.md
-
-# Decompiled game code (reference only, not part of mod)
-Assembly-CSharp/

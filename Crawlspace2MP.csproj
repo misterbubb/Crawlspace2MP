@@ -6,12 +6,18 @@
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Game install path for deployment -->
-    <GamePath>C:\Program Files (x86)\Steam\steamapps\common\Crawlspace 2</GamePath>
+    <GamePath>D:\SteamLibrary\steamapps\common\Crawlspace 2</GamePath>
   </PropertyGroup>
 
-  <!-- Exclude the decompiled game code - it's just for reference -->
+  <!-- Exclude folders that shouldn't be compiled -->
   <ItemGroup>
     <Compile Remove="Assembly-CSharp\**" />
+    <Compile Remove="Preloader\**" />
+    <Compile Remove="crawlspace2decompiledunityproject\**" />
+    <EmbeddedResource Remove="Preloader\**" />
+    <EmbeddedResource Remove="crawlspace2decompiledunityproject\**" />
+    <None Remove="Preloader\**" />
+    <None Remove="crawlspace2decompiledunityproject\**" />
   </ItemGroup>
 
   <!-- Debug configuration -->
@@ -28,6 +34,17 @@
     <DebugType>none</DebugType>
   </PropertyGroup>
 
+  <!-- Copy to Thunderstore package folder -->
+  <Target Name="CopyToThunderstore" AfterTargets="Build">
+    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll"
+          DestinationFolder="Thunderstore\BepInEx\plugins\Crawlspace2MP\"
+          SkipUnchangedFiles="false" />
+    <Copy SourceFiles="mpassets"
+          DestinationFolder="Thunderstore\BepInEx\plugins\Crawlspace2MP\"
+          SkipUnchangedFiles="true" />
+    <Message Text="Copied mod DLL to Thunderstore folder" Importance="high" />
+  </Target>
+
   <!-- Copy steam_api64.dll to game folder on build -->
   <Target Name="CopySteamApi" AfterTargets="Build">
     <Copy SourceFiles="$(NuGetPackageRoot)facepunch.steamworks\2.3.3\content\steam_api64.dll"
@@ -41,12 +58,17 @@
                       Condition="Exists('$(GamePath)') And !Exists('$(GamePath)\steam_appid.txt')" />
     <!-- Copy mod DLL to plugins folder -->
     <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll"
-          DestinationFolder="$(GamePath)\BepInEx\plugins"
+          DestinationFolder="$(GamePath)\BepInEx\plugins\Crawlspace2MP"
           SkipUnchangedFiles="false"
           Condition="Exists('$(GamePath)\BepInEx\plugins')" />
     <!-- Copy Facepunch.Steamworks to plugins folder -->
     <Copy SourceFiles="$(OutputPath)Facepunch.Steamworks.Win64.dll"
-          DestinationFolder="$(GamePath)\BepInEx\plugins"
+          DestinationFolder="$(GamePath)\BepInEx\plugins\Crawlspace2MP"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(GamePath)\BepInEx\plugins')" />
+    <!-- Copy mpassets to plugins folder -->
+    <Copy SourceFiles="mpassets"
+          DestinationFolder="$(GamePath)\BepInEx\plugins\Crawlspace2MP"
           SkipUnchangedFiles="true"
           Condition="Exists('$(GamePath)\BepInEx\plugins')" />
     <Message Text="Deployed mod to game folder" Importance="high" 
@@ -132,15 +154,39 @@
       <Private>false</Private>
     </Reference>
     
+    <!-- Animation module for Animator -->
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>lib\UnityEngine.AnimationModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
     <!-- UI module for Image component -->
     <Reference Include="UnityEngine.UI">
       <HintPath>lib\UnityEngine.UI.dll</HintPath>
       <Private>false</Private>
     </Reference>
     
+    <!-- UI Module for Canvas -->
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>lib\UnityEngine.UIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
+    <!-- Text Rendering for TextAnchor/FontStyle -->
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>lib\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
     <!-- AssetBundle module for custom models -->
     <Reference Include="UnityEngine.AssetBundleModule">
       <HintPath>lib\UnityEngine.AssetBundleModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    
+    <!-- XR Interaction Toolkit for VR input -->
+    <Reference Include="Unity.XR.Interaction.Toolkit">
+      <HintPath>lib\Unity.XR.Interaction.Toolkit.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
