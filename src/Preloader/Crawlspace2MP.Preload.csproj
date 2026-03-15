@@ -14,7 +14,7 @@
   <!-- Copy patcher to Thunderstore folder -->
   <Target Name="CopyToThunderstore" AfterTargets="Build">
     <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll"
-          DestinationFolder="..\Thunderstore\BepInEx\patchers\Crawlspace2MP\"
+          DestinationFolder="..\..\Thunderstore\BepInEx\patchers\Crawlspace2MP\"
           SkipUnchangedFiles="false" />
     <Message Text="Copied patcher DLL to Thunderstore folder" Importance="high" />
   </Target>
@@ -25,11 +25,11 @@
           DestinationFolder="$(GamePath)\BepInEx\patchers\Crawlspace2MP\"
           SkipUnchangedFiles="false"
           Condition="Exists('$(GamePath)\BepInEx')" />
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\Thunderstore\BepInEx\patchers\Crawlspace2MP\steam_api64.dll"
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\..\Thunderstore\BepInEx\patchers\Crawlspace2MP\steam_api64.dll"
           DestinationFolder="$(GamePath)\BepInEx\patchers\Crawlspace2MP\"
           SkipUnchangedFiles="true"
           Condition="Exists('$(GamePath)\BepInEx')" />
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\Thunderstore\BepInEx\patchers\Crawlspace2MP\steam_appid.txt"
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\..\Thunderstore\BepInEx\patchers\Crawlspace2MP\steam_appid.txt"
           DestinationFolder="$(GamePath)\BepInEx\patchers\Crawlspace2MP\"
           SkipUnchangedFiles="true"
           Condition="Exists('$(GamePath)\BepInEx')" />

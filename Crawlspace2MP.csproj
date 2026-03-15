@@ -12,11 +12,11 @@
   <!-- Exclude folders that shouldn't be compiled -->
   <ItemGroup>
     <Compile Remove="Assembly-CSharp\**" />
-    <Compile Remove="Preloader\**" />
+    <Compile Remove="src\Preloader\**" />
     <Compile Remove="crawlspace2decompiledunityproject\**" />
-    <EmbeddedResource Remove="Preloader\**" />
+    <EmbeddedResource Remove="src\Preloader\**" />
     <EmbeddedResource Remove="crawlspace2decompiledunityproject\**" />
-    <None Remove="Preloader\**" />
+    <None Remove="src\Preloader\**" />
     <None Remove="crawlspace2decompiledunityproject\**" />
   </ItemGroup>
 

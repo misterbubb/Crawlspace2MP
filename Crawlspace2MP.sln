@@ -4,7 +4,7 @@ VisualStudioVersion = 17.8.34309.116
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Crawlspace2MP", "Crawlspace2MP.csproj", "{75F4DDC9-D61E-4664-9F81-AE3B61E405E3}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Crawlspace2MP.Preload", "Preloader\Crawlspace2MP.Preload.csproj", "{86CF97A2-AF07-4FB0-8A69-95F9A047D2AC}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Crawlspace2MP.Preload", "src\Preloader\Crawlspace2MP.Preload.csproj", "{86CF97A2-AF07-4FB0-8A69-95F9A047D2AC}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

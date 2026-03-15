@@ -1,8 +1,8 @@
 # Build outputs
 bin/
 obj/
-Preloader/bin/
-Preloader/obj/
+src/Preloader/bin/
+src/Preloader/obj/
 
 # NuGet
 *.nupkg
