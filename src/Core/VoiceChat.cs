@@ -27,7 +27,7 @@ namespace Crawlspace2MP
         
         // State
         private bool _isRecording = false;
-        private SteamTransport _steam;
+        private INetworkTransport _steam;
         private Dictionary<int, VoicePlayer> _voicePlayers = new Dictionary<int, VoicePlayer>();
         
         // Steam voice sample rate (set after decompression)
@@ -35,7 +35,7 @@ namespace Crawlspace2MP
         
         private PacketWriter _writer = new PacketWriter(1024 * 24);
         
-        public void Initialize(SteamTransport steam)
+        public void Initialize(INetworkTransport steam)
         {
             _steam = steam;
             Plugin.Log.LogInfo("[Voice] Voice chat initialized");

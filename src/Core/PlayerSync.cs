@@ -322,9 +322,9 @@ namespace Crawlspace2MP
         private bool _exitDoorFullyCharged = false;
         
         private PacketWriter _writer = new PacketWriter(1024);
-        private SteamTransport _steam;
+        private INetworkTransport _steam;
 
-        public void Initialize(SteamTransport steam)
+        public void Initialize(INetworkTransport steam)
         {
             _steam = steam;
             
@@ -380,6 +380,18 @@ namespace Crawlspace2MP
             // Stop spectate if we were receiving from this peer
             MPManager.Instance?.Spectate?.StopReceiving();
             MPManager.Instance?.Spectate?.StopSending();
+            
+            // If we're a ghost and no one is left, go Home
+            if (_localIsGhost && _remotePlayers.Count == 0)
+            {
+                string scene = SceneManager.GetActiveScene().name;
+                if (scene.Contains("Night") && !_pendingHomeLoad)
+                {
+                    Plugin.Log.LogInfo("[Ghost] All peers disconnected - scheduling Home load");
+                    _pendingHomeLoad = true;
+                    _pendingHomeLoadTimer = 1.0f;
+                }
+            }
         }
         
         private void OnDataReceived(int peerId, PacketReader reader)
@@ -419,7 +431,7 @@ namespace Crawlspace2MP
                     HandleJeffFlashPacket();
                     break;
                 case PACKET_BATTERY_SYNC:
-                    HandleBatterySync(reader);
+                    HandleBatterySync(peerId, reader);
                     break;
                 case PACKET_PAINTING_ENTITY:
                     HandlePaintingEntity(reader);
@@ -440,7 +452,7 @@ namespace Crawlspace2MP
                     HandleVentSoundPacket(reader);
                     break;
                 case PACKET_INTERACTION_LOCK:
-                    HandleInteractionLockPacket(reader);
+                    HandleInteractionLockPacket(peerId, reader);
                     break;
                 case PACKET_EXIT_DOOR_PROGRESS:
                     HandleExitDoorProgressPacket(reader);
@@ -546,21 +558,46 @@ namespace Crawlspace2MP
             
             Plugin.Log.LogInfo($"Received scene change: {sceneName}, night={nightSelected}");
             
-            if (!_steam.IsHost)
+            // If transitioning to Home from a Night, save night completion for ALL players
+            string currentScene = SceneManager.GetActiveScene().name;
+            if (sceneName.Equals("Home", System.StringComparison.OrdinalIgnoreCase) && currentScene.Contains("Night"))
             {
-                calenderControl.nightSelected = nightSelected;
-                IsLoadingFromSync = true;
-                SceneManager.LoadScene(sceneName);
+                var sceneLeaveObj = Object.FindObjectOfType<sceneLeave>();
+                if (sceneLeaveObj != null)
+                {
+                    sceneLeaveObj.loadSelectedNight();
+                    Plugin.Log.LogInfo($"[Sync] Saved night completion via loadSelectedNight()");
+                }
             }
-            else if (_localIsGhost)
+            
+            calenderControl.nightSelected = nightSelected;
+            
+            if (_steam.IsHost && _localIsGhost)
             {
-                // Ghost host received scene change from client (client triggered exit)
-                // Load the scene so the ghost transitions with the alive player
+                // Ghost host: client triggered exit, follow them
                 Plugin.Log.LogInfo($"[Ghost Host] Client triggered scene exit, loading: {sceneName}");
-                calenderControl.nightSelected = nightSelected;
                 IsLoadingFromSync = true;
                 ResetGhostState();
                 SceneManager.LoadScene(sceneName);
+            }
+            else if (_steam.IsHost)
+            {
+                // Alive host: client triggered exit
+                Plugin.Log.LogInfo($"[Host] Client triggered scene exit, loading: {sceneName}");
+                IsLoadingFromSync = true;
+                TriggerClientFade();
+                SceneManager.LoadScene(sceneName);
+            }
+            else
+            {
+                // Client: defer the scene load to Update so OnSceneLoaded fires properly
+                // Loading directly from a network callback can skip Unity's sceneLoaded event
+                Plugin.Log.LogInfo($"[Client] Deferring scene load: {sceneName}");
+                IsLoadingFromSync = true;
+                _lastScene = sceneName;
+                _pendingSceneLoad = sceneName;
+                _sceneLoadDelayTimer = 0.1f; // Minimal delay, just enough to defer to Update
+                TriggerClientFade();
             }
         }
         
@@ -803,58 +840,7 @@ namespace Crawlspace2MP
             _remoteBatteryStates[peerId].Charge = charge;
         }
         
-        private void HandlePuzzleCompletePacket(PacketReader reader)
-        {
-            int puzzleId = reader.GetInt();
-            int totalCompleted = reader.GetInt();
-            
-            Plugin.Log.LogInfo($"Received puzzle complete: puzzleID={puzzleId}, total={totalCompleted}");
-            
-            // Update total completed
-            PuzzleMaster.totalCompletedPuzzles = totalCompleted;
-            
-            // Find the puzzle controller with this ID and mark it complete
-            if (_puzzleMaster == null)
-            {
-                _puzzleMaster = Object.FindObjectOfType<PuzzleMaster>();
-            }
-            
-            if (_puzzleMaster != null)
-            {
-                PuzzleController[] controllers = new PuzzleController[] {
-                    _puzzleMaster.pCon1, _puzzleMaster.pCon2, _puzzleMaster.pCon3,
-                    _puzzleMaster.pCon4, _puzzleMaster.pCon5, _puzzleMaster.pCon6,
-                    _puzzleMaster.pCon7, _puzzleMaster.pCon8, _puzzleMaster.pCon9
-                };
-                
-                foreach (var controller in controllers)
-                {
-                    if (controller != null && controller.thisPuzzleID == puzzleId)
-                    {
-                        // Mark puzzle as completed
-                        var pcType = typeof(PuzzleController);
-                        var completedField = pcType.GetField("puzzleHasCompleted", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        if (completedField != null)
-                        {
-                            completedField.SetValue(controller, true);
-                        }
-                        
-                        // Turn on the fan
-                        if (controller.fanspin != null)
-                            controller.fanspin.isOn = true;
-                        
-                        // Show map indicator
-                        controller.thisMapIndicator?.SetActive(true);
-                        
-                        // Play win audio
-                        controller.winAudio?.Play();
-                        
-                        Plugin.Log.LogInfo($"[Client] Marked puzzle {puzzleId} as complete");
-                        break;
-                    }
-                }
-            }
-        }
+        // (Old handler removed — HandlePuzzleComplete is the active handler)
         
         private void HandlePuzzleBlockPacket(PacketReader reader)
         {
@@ -880,15 +866,21 @@ namespace Crawlspace2MP
             HandleVentSound(reader);
         }
         
-        private void HandleInteractionLockPacket(PacketReader reader)
+        private void HandleInteractionLockPacket(int peerId, PacketReader reader)
         {
             string interactionId = reader.GetString();
             bool locked = reader.GetBool();
             
             if (locked)
-                _interactionLocks[interactionId] = 1; // Remote peer has lock
+            {
+                _interactionLocks[interactionId] = peerId; // Track which peer holds it
+                _lockTimestamps[interactionId] = Time.time;
+            }
             else
+            {
                 _interactionLocks.Remove(interactionId);
+                _lockTimestamps.Remove(interactionId);
+            }
         }
         
         private void HandleExitDoorProgressPacket(PacketReader reader)
@@ -999,27 +991,54 @@ namespace Crawlspace2MP
             if (isGhost && _remoteBatteryStates.ContainsKey(peerId))
             {
                 _remoteBatteryStates[peerId].LocationID = 0;
+                _remoteBatteryStates[peerId].Charge = 0f;
                 _remoteBatteryStates[peerId].LeftHolding = false;
                 _remoteBatteryStates[peerId].RightHolding = false;
                 _remoteBatteryStates[peerId].InBackpack = false;
+                Plugin.LogDebug($"[Death] Cleared battery state for dead peer {peerId}");
+            }
+            
+            // Clear interaction locks held by the dead player specifically
+            if (isGhost)
+            {
+                var peerLocks = new List<string>();
+                foreach (var kvp in _interactionLocks)
+                {
+                    if (kvp.Value == peerId)
+                        peerLocks.Add(kvp.Key);
+                }
+                foreach (var lockId in peerLocks)
+                {
+                    _interactionLocks.Remove(lockId);
+                    _lockTimestamps.Remove(lockId);
+                }
+                if (peerLocks.Count > 0)
+                    Plugin.LogDebug($"[Death] Cleared {peerLocks.Count} interaction locks from dead peer {peerId}");
             }
             
             // Also clear crank state if they had battery there
             _remoteCrankHasBattery = false;
             
-            // CRITICAL: If WE are a ghost and our partner just died, all players are dead
-            // We need to go to Home, but we can't call SceneManager.LoadScene directly from
-            // a network callback when the game is paused (VR headset off)
-            // Instead, set a flag that will be checked in Update()
-            if (isGhost && _localIsGhost)
+            // Check if ALL players are now dead (including us)
+            // Only go Home if we're a ghost AND every remote player is also a ghost
+            if (_localIsGhost && isGhost)
             {
-                string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-                if (currentScene.Contains("Night"))
+                bool anyoneAlive = false;
+                foreach (var kvp in _remotePlayers)
                 {
-                    Plugin.Log.LogInfo("[Ghost] Partner also died - all players dead, scheduling Home load");
-                    _pendingHomeLoad = true;
-                    _pendingHomeLoadTimer = 3.0f; // Wait for jumpscare to finish before loading Home (covers bitchMode 1.8s + 0.8s jumpscare)
-                    return;
+                    if (!kvp.Value.IsGhost) { anyoneAlive = true; break; }
+                }
+                
+                if (!anyoneAlive)
+                {
+                    string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+                    if (currentScene.Contains("Night"))
+                    {
+                        Plugin.Log.LogInfo("[Ghost] All players dead - scheduling Home load");
+                        _pendingHomeLoad = true;
+                        _pendingHomeLoadTimer = 3.0f;
+                        return;
+                    }
                 }
             }
             
@@ -1126,6 +1145,14 @@ namespace Crawlspace2MP
             // Only process if this is actually a new scene
             if (scene.name == _lastScene && !IsLoadingFromSync)
             {
+                // Still need to recreate remote players — Unity destroys all GameObjects on scene load
+                if (_steam != null && _steam.IsRunning && _connectedPeerIds.Count > 0)
+                {
+                    foreach (var remote in _remotePlayers.Values)
+                        remote.Destroy();
+                    _remotePlayers.Clear();
+                    _recreateRemotePlayersNextFrame = true;
+                }
                 return;
             }
             
@@ -1197,11 +1224,27 @@ namespace Crawlspace2MP
                 if (_pendingHomeLoadTimer <= 0f)
                 {
                     _pendingHomeLoad = false;
-                    Plugin.Log.LogInfo("[Ghost] EXECUTING DEFERRED HOME LOAD - all players dead");
-                    ResetGhostState();
-                    IsLoadingFromSync = true; // Don't broadcast - partner handles their own Home load
-                    UnityEngine.SceneManagement.SceneManager.LoadScene("Home");
-                    return;
+                    
+                    // Re-verify all partners are still dead before going Home
+                    // The situation may have changed since we scheduled this
+                    bool stillAllDead = true;
+                    foreach (var kvp in _remotePlayers)
+                    {
+                        if (!kvp.Value.IsGhost) { stillAllDead = false; break; }
+                    }
+                    
+                    if (stillAllDead && _localIsGhost)
+                    {
+                        string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+                        if (currentScene.Contains("Night"))
+                        {
+                            Plugin.Log.LogInfo("[Ghost] EXECUTING DEFERRED HOME LOAD - all players dead");
+                            ResetGhostState();
+                            IsLoadingFromSync = true;
+                            UnityEngine.SceneManagement.SceneManager.LoadScene("Home");
+                            return;
+                        }
+                    }
                 }
             }
             
@@ -1400,6 +1443,9 @@ namespace Crawlspace2MP
                 TryApplyPuzzleInit();
             }
             
+            // Re-apply puzzle indicators for a few seconds after init to catch late resets
+            ReapplyPuzzleIndicators();
+            
             // Check exit door progress sync (host only)
             CheckExitDoorSync();
             
@@ -1560,6 +1606,10 @@ namespace Crawlspace2MP
                 _puzzleMaster = null;
                 _puzzleInitSent = false;
                 _puzzleInitStartWaited = false;
+                _puzzleInitApplied = false;
+                _puzzleInitReapplyTimer = 0f;
+                _puzzleInitCompletedStates = null;
+                _puzzleInitActiveStates = null;
                 _completedPuzzleIDs.Clear(); // Clear puzzle completion tracking on scene change
                 _leaveDoor = null;
                 _lastDoorLeaveTimer = 0;
@@ -1568,28 +1618,19 @@ namespace Crawlspace2MP
                 _lastCrankCharge = -1f;
                 _lastCrankHasBattery = false;
                 
-                // FALLBACK: If OnSceneLoaded didn't fire (which can happen), recreate remote players here
-                // This is a safety net - OnSceneLoaded should handle this, but sometimes Unity's callback doesn't fire
+                // FALLBACK: If OnSceneLoaded didn't fire (which can happen when loading from
+                // network callbacks), recreate remote players and clear stale state
                 if (_steam != null && _steam.IsRunning && _connectedPeerIds.Count > 0)
                 {
-                    // Check if remote players were destroyed but not recreated
-                    bool needsRecreation = _remotePlayers.Count == 0 || 
-                        (_remotePlayers.Count > 0 && !AnyRemotePlayerValid());
+                    // Always clear and recreate — Unity destroys GameObjects on scene load
+                    foreach (var remote in _remotePlayers.Values)
+                        remote.Destroy();
+                    _remotePlayers.Clear();
+                    _remoteBatteryStates.Clear();
+                    ClearAllLocks();
                     
-                    if (needsRecreation)
-                    {
-                        Plugin.Log.LogInfo($"[Fallback] OnSceneLoaded may not have fired - recreating {_connectedPeerIds.Count} remote players");
-                        // Clear any invalid remote players
-                        foreach (var remote in _remotePlayers.Values)
-                        {
-                            remote.Destroy();
-                        }
-                        _remotePlayers.Clear();
-                        _remoteBatteryStates.Clear();
-                        
-                        // Schedule recreation for next frame
-                        _recreateRemotePlayersNextFrame = true;
-                    }
+                    // Schedule recreation for next frame
+                    _recreateRemotePlayersNextFrame = true;
                 }
             }
         }
@@ -2297,12 +2338,8 @@ namespace Crawlspace2MP
         private float _lastTargetedKillTime = 0f;
         private void CheckSyncedMonsterKills()
         {
-            // Cooldown: only send one targeted kill per second to avoid spam
             if (Time.time - _lastTargetedKillTime < 1f) return;
-            
-            // Get remote player positions
-            var remotePositions = GetRemotePlayerPositionsNonGhost();
-            if (remotePositions.Count == 0) return;
+            if (_remotePlayers.Count == 0) return;
             
             // Henry kill check
             if (_henry != null)
@@ -2312,15 +2349,16 @@ namespace Crawlspace2MP
                 
                 if (!resetSwitch)
                 {
-                    foreach (var pos in remotePositions)
+                    foreach (var kvp in _remotePlayers)
                     {
-                        float dist = Vector3.Distance(pos, _henry.transform.position);
-                        if (dist < 0.6f) // Slightly larger than local 0.5f to account for network latency
+                        if (kvp.Value.IsGhost || kvp.Value.Head == null) continue;
+                        float dist = Vector3.Distance(kvp.Value.Head.transform.position, _henry.transform.position);
+                        if (dist < 0.6f)
                         {
-                            Plugin.Log.LogInfo($"[Host] Henry is near remote player (dist={dist:F2}) - sending targeted kill");
-                            SendTargetedKill(4); // 4 = Henry death type
+                            Plugin.Log.LogInfo($"[Host] Henry near peer {kvp.Key} (dist={dist:F2}) - sending targeted kill");
+                            SendTargetedKillTo(kvp.Key, 4);
                             _lastTargetedKillTime = Time.time;
-                            return; // Only one kill per check
+                            return;
                         }
                     }
                 }
@@ -2329,28 +2367,30 @@ namespace Crawlspace2MP
             // Harold kill check
             if (_harold != null)
             {
-                foreach (var pos in remotePositions)
+                foreach (var kvp in _remotePlayers)
                 {
-                    float dist = Vector3.Distance(pos, _harold.transform.position);
+                    if (kvp.Value.IsGhost || kvp.Value.Head == null) continue;
+                    float dist = Vector3.Distance(kvp.Value.Head.transform.position, _harold.transform.position);
                     if (dist < 0.6f)
                     {
-                        Plugin.Log.LogInfo($"[Host] Harold is near remote player (dist={dist:F2}) - sending targeted kill");
-                        SendTargetedKill(2); // 2 = Harold death type
+                        Plugin.Log.LogInfo($"[Host] Harold near peer {kvp.Key} (dist={dist:F2}) - sending targeted kill");
+                        SendTargetedKillTo(kvp.Key, 2);
                         _lastTargetedKillTime = Time.time;
-                        return; // Only one kill per check
+                        return;
                     }
                 }
             }
         }
         
-        private void SendTargetedKill(int deathType)
+        private void SendTargetedKillTo(int peerId, int deathType)
         {
             if (_steam == null || !_steam.IsRunning) return;
             
             _writer.Reset();
             _writer.Put(PACKET_TARGETED_KILL);
             _writer.Put(deathType);
-            SendToAllPeers(true);
+            byte[] data = _writer.GetBytes();
+            _steam.SendTo(peerId, data, true);
         }
         
         private void HandleTargetedKill(PacketReader reader)
@@ -2454,7 +2494,7 @@ namespace Crawlspace2MP
             SendToAllPeers(true);
         }
         
-        private void HandleBatterySync(PacketReader reader)
+        private void HandleBatterySync(int peerId, PacketReader reader)
         {
             float charge = reader.GetFloat();
             int locationID = reader.GetInt();
@@ -2462,35 +2502,25 @@ namespace Crawlspace2MP
             bool leftHolding = reader.GetBool();
             bool rightHolding = reader.GetBool();
             
-            // Store remote player's battery state (for potential UI display)
-            // We DON'T apply it to local BackpackControl - each player has their own battery
+            Plugin.LogDebug($"[Battery] Peer {peerId}: charge={charge:F1}, loc={locationID}, backpack={inBackpack}, L={leftHolding}, R={rightHolding}");
             
-            Plugin.LogDebug($"[Battery] Remote player: charge={charge:F1}, loc={locationID}, backpack={inBackpack}, L={leftHolding}, R={rightHolding}");
+            // Ignore battery updates from ghosts
+            if (_remotePlayers.TryGetValue(peerId, out var remote) && remote.IsGhost)
+                return;
             
-            // Update remote battery state for the first remote player (simplified for 2-player)
-            if (_remotePlayers.Count > 0)
-            {
-                foreach (var kvp in _remotePlayers)
-                {
-                    // Ignore battery updates from ghosts - their battery is gone
-                    // This prevents stale battery state from blocking the alive player
-                    if (kvp.Value.IsGhost) break;
-                    
-                    if (!_remoteBatteryStates.ContainsKey(kvp.Key))
-                    {
-                        _remoteBatteryStates[kvp.Key] = new RemoteBatteryState();
-                    }
-                    _remoteBatteryStates[kvp.Key].Charge = charge;
-                    _remoteBatteryStates[kvp.Key].LocationID = locationID;
-                    _remoteBatteryStates[kvp.Key].InBackpack = inBackpack;
-                    _remoteBatteryStates[kvp.Key].LeftHolding = leftHolding;
-                    _remoteBatteryStates[kvp.Key].RightHolding = rightHolding;
-                    
-                    // Update remote player visual to show battery in hand
-                    kvp.Value.SetBatteryState(leftHolding, rightHolding);
-                    break; // Only first remote player for now
-                }
-            }
+            // Store battery state keyed by peer ID
+            if (!_remoteBatteryStates.ContainsKey(peerId))
+                _remoteBatteryStates[peerId] = new RemoteBatteryState();
+            
+            _remoteBatteryStates[peerId].Charge = charge;
+            _remoteBatteryStates[peerId].LocationID = locationID;
+            _remoteBatteryStates[peerId].InBackpack = inBackpack;
+            _remoteBatteryStates[peerId].LeftHolding = leftHolding;
+            _remoteBatteryStates[peerId].RightHolding = rightHolding;
+            
+            // Update remote player visual to show battery in hand
+            if (remote != null)
+                remote.SetBatteryState(leftHolding, rightHolding);
         }
         
         // Get remote player's battery state for UI display
@@ -2636,8 +2666,6 @@ namespace Crawlspace2MP
         }
         
         // Puzzle sync tracking
-        private float _lastPuzzleStateSyncTime = 0f;
-        private float _puzzleStateSyncInterval = 2f; // Re-sync puzzle state every 2 seconds
         private int _lastTotalCompletedPuzzles = -1;
         
         private void CheckPuzzleInitSync()
@@ -2645,9 +2673,13 @@ namespace Crawlspace2MP
             // Only host sends puzzle init
             if (!_steam.IsHost) return;
             
+            // Ghost host should NOT re-send puzzle init — the client already has
+            // the correct state and re-sending would wipe their in-progress puzzles
+            if (_localIsGhost) return;
+            
             // If we're a ghost and haven't restored puzzle state yet, don't send reset state
             // The restore happens a couple frames after scene load — wait for it
-            if (_localIsGhost && _pendingGhostPuzzleRestore) return;
+            if (_pendingGhostPuzzleRestore) return;
             
             // Find puzzle master
             if (_puzzleMaster == null)
@@ -2665,20 +2697,11 @@ namespace Crawlspace2MP
                 _lastTotalCompletedPuzzles = PuzzleMaster.totalCompletedPuzzles;
             }
             
-            // Periodically re-sync puzzle completion state to ensure consistency
-            if (Time.time - _lastPuzzleStateSyncTime >= _puzzleStateSyncInterval)
-            {
-                _lastPuzzleStateSyncTime = Time.time;
-                
-                // Check if completion count changed
-                if (PuzzleMaster.totalCompletedPuzzles != _lastTotalCompletedPuzzles)
-                {
-                    _lastTotalCompletedPuzzles = PuzzleMaster.totalCompletedPuzzles;
-                    // Re-send full puzzle state
-                    SendPuzzleInit();
-                    Plugin.Log.LogInfo($"[Host] Re-synced puzzle state: completed={PuzzleMaster.totalCompletedPuzzles}");
-                }
-            }
+            // NOTE: We do NOT periodically re-sync puzzle state.
+            // The initial SendPuzzleInit handles setup, and PACKET_PUZZLE_COMPLETE
+            // handles individual completions. Re-syncing caused double-counting
+            // because the client would get both the init (setting the count) and
+            // the complete packet (incrementing the count) for the same puzzle.
         }
         
         private void SendPuzzleInit()
@@ -2917,6 +2940,13 @@ namespace Crawlspace2MP
             }
             
             Plugin.Log.LogInfo($"[Ghost] Restored puzzle state: completed={saved.TotalCompleted}, required={saved.RequiredPuzzles}");
+            
+            // Start re-apply timer to catch any late PuzzleController resets
+            _puzzleInitCompletedStates = saved.CompletedStates;
+            _puzzleInitActiveStates = saved.ActiveStates;
+            _puzzleInitReapplyTimer = PUZZLE_INIT_REAPPLY_DURATION;
+            _puzzleInitApplied = true;
+            
             _savedGhostPuzzleState = null;
         }
         
@@ -2925,7 +2955,23 @@ namespace Crawlspace2MP
             // Only clients receive puzzle init
             if (_steam.IsHost) return;
             
-            Plugin.Log.LogInfo("[Client] Received puzzle init");
+            Plugin.LogDebug("[Client] Received puzzle init");
+            
+            // Only apply puzzle init once per scene — subsequent inits would
+            // overwrite in-progress puzzle state and cause desync
+            if (_puzzleInitApplied)
+            {
+                // Still need to read all data to not corrupt the stream
+                for (int i = 0; i < 9; i++)
+                {
+                    reader.GetBool(); reader.GetInt(); reader.GetBool();
+                    int bc = reader.GetInt();
+                    for (int j = 0; j < bc; j++) reader.GetInt();
+                }
+                reader.GetInt(); reader.GetInt();
+                Plugin.LogDebug("[Client] Ignoring duplicate puzzle init (already applied)");
+                return;
+            }
             
             // Read all the data first (to not corrupt the stream)
             bool[] activeStates = new bool[9];
@@ -2978,6 +3024,12 @@ namespace Crawlspace2MP
         
         private PendingPuzzleInit _pendingPuzzleInit = null;
         private bool _puzzleInitStartWaited = false;
+        private bool _puzzleInitApplied = false;
+        private float _puzzleInitReapplyTimer = 0f;
+        private const float PUZZLE_INIT_REAPPLY_DURATION = 3f; // Re-apply for 3 seconds after init
+        private bool[] _puzzleInitCompletedStates = null;
+        private bool[] _puzzleInitActiveStates = null;
+        public bool PuzzleInitApplied => _puzzleInitApplied || _pendingPuzzleInit != null;
         
         private void TryApplyPuzzleInit()
         {
@@ -3034,9 +3086,14 @@ namespace Crawlspace2MP
                     presetField?.SetValue(controllers[i], presetID);
                     
                     var completedField = pcType.GetField("puzzleHasCompleted", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                    completedField?.SetValue(controllers[i], isCompleted);
                     
-                    if (isCompleted)
+                    // Don't un-complete a puzzle the client actually completed during gameplay
+                    // (tracked in _completedPuzzleIDs). But DO override the random init state.
+                    bool completedDuringGameplay = controllers[i] != null && _completedPuzzleIDs.Contains(controllers[i].thisPuzzleID);
+                    if (!completedDuringGameplay)
+                        completedField?.SetValue(controllers[i], isCompleted);
+                    
+                    if (isCompleted || completedDuringGameplay)
                     {
                         // Completed puzzle - fan on, map indicator on
                         if (controllers[i].fanspin != null)
@@ -3055,6 +3112,10 @@ namespace Crawlspace2MP
                     else
                     {
                         // Active puzzle - not completed yet, needs to be solved
+                        // Turn off fan and indicator (client's random init may have turned them on)
+                        completedField?.SetValue(controllers[i], false);
+                        if (controllers[i].fanspin != null)
+                            controllers[i].fanspin.isOn = false;
                         controllers[i].thisMapIndicator?.SetActive(false);
                     }
                     
@@ -3073,13 +3134,91 @@ namespace Crawlspace2MP
             
             _isReceivingPuzzleBlock = false;
             
-            PuzzleMaster.totalCompletedPuzzles = _pendingPuzzleInit.TotalCompleted;
+            // Never decrease totalCompletedPuzzles — the client may have completed
+            // puzzles that the host hasn't processed yet (race condition during ghost reload)
+            if (_pendingPuzzleInit.TotalCompleted > PuzzleMaster.totalCompletedPuzzles)
+                PuzzleMaster.totalCompletedPuzzles = _pendingPuzzleInit.TotalCompleted;
             PuzzleMaster.requiredPuzzles = _pendingPuzzleInit.RequiredPuzzles;
             
-            Plugin.Log.LogInfo($"[Client] Applied puzzle init: completed={PuzzleMaster.totalCompletedPuzzles}, required={PuzzleMaster.requiredPuzzles}");
+            // Mark all completed puzzles in _completedPuzzleIDs so HandlePuzzleComplete
+            // won't double-count them if a PACKET_PUZZLE_COMPLETE arrives for the same puzzle
+            for (int j = 0; j < 9; j++)
+            {
+                if (_pendingPuzzleInit.CompletedStates[j] && controllers[j] != null)
+                {
+                    _completedPuzzleIDs.Add(controllers[j].thisPuzzleID);
+                }
+            }
             
-            // Clear pending init
+            Plugin.LogDebug($"[Client] Applied puzzle init: completed={PuzzleMaster.totalCompletedPuzzles}, required={PuzzleMaster.requiredPuzzles}");
+            
+            // Apply visual state for any completions that arrived before PuzzleMaster was available
+            // HandlePuzzleComplete increments the counter but can't set indicators if _puzzleMaster was null
+            foreach (var completedId in _completedPuzzleIDs)
+            {
+                for (int k = 0; k < 9; k++)
+                {
+                    if (controllers[k] != null && controllers[k].thisPuzzleID == completedId)
+                    {
+                        var cField = pcType.GetField("puzzleHasCompleted", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        if (cField != null) cField.SetValue(controllers[k], true);
+                        if (controllers[k].fanspin != null) controllers[k].fanspin.isOn = true;
+                        controllers[k].thisMapIndicator?.SetActive(true);
+                        break;
+                    }
+                }
+            }
+            
+            // Clear pending init — save states for re-application
+            _puzzleInitCompletedStates = _pendingPuzzleInit.CompletedStates;
+            _puzzleInitActiveStates = _pendingPuzzleInit.ActiveStates;
             _pendingPuzzleInit = null;
+            _puzzleInitApplied = true;
+            _puzzleInitReapplyTimer = PUZZLE_INIT_REAPPLY_DURATION;
+        }
+        
+        /// <summary>
+        /// Re-applies map indicator and fan state for a few seconds after init.
+        /// Catches any PuzzleController.Start() or FixedUpdate that runs late and resets state.
+        /// </summary>
+        private void ReapplyPuzzleIndicators()
+        {
+            if (_puzzleInitReapplyTimer <= 0f) return;
+            _puzzleInitReapplyTimer -= Time.deltaTime;
+            
+            if (_puzzleMaster == null) return;
+            if (_puzzleInitCompletedStates == null || _puzzleInitActiveStates == null) return;
+            
+            var pcType = typeof(PuzzleController);
+            var completedField = pcType.GetField("puzzleHasCompleted", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            
+            PuzzleController[] controllers = new PuzzleController[] {
+                _puzzleMaster.pCon1, _puzzleMaster.pCon2, _puzzleMaster.pCon3,
+                _puzzleMaster.pCon4, _puzzleMaster.pCon5, _puzzleMaster.pCon6,
+                _puzzleMaster.pCon7, _puzzleMaster.pCon8, _puzzleMaster.pCon9
+            };
+            
+            for (int i = 0; i < 9; i++)
+            {
+                if (controllers[i] == null) continue;
+                
+                bool shouldBeCompleted = _puzzleInitCompletedStates[i] || !_puzzleInitActiveStates[i];
+                
+                if (shouldBeCompleted)
+                {
+                    bool currentCompleted = completedField != null && (bool)completedField.GetValue(controllers[i]);
+                    bool indicatorActive = controllers[i].thisMapIndicator != null && controllers[i].thisMapIndicator.activeSelf;
+                    
+                    // If state was reset by something, re-apply it
+                    if (!currentCompleted || !indicatorActive)
+                    {
+                        if (completedField != null) completedField.SetValue(controllers[i], true);
+                        if (controllers[i].fanspin != null) controllers[i].fanspin.isOn = true;
+                        controllers[i].thisMapIndicator?.SetActive(true);
+                        Plugin.LogDebug($"[PuzzleInit] Re-applied completed state for puzzle index {i} (something reset it)");
+                    }
+                }
+            }
         }
         
         // Exit door progress sync - EITHER player can charge the door
@@ -3150,7 +3289,12 @@ namespace Crawlspace2MP
         public void MarkPuzzleCompleted(int puzzleID)
         {
             _completedPuzzleIDs.Add(puzzleID);
-            Plugin.Log.LogInfo($"[Puzzle] Marked puzzle {puzzleID} as completed locally");
+            Plugin.LogDebug($"[Puzzle] Marked puzzle {puzzleID} as completed locally");
+        }
+        
+        public bool IsPuzzleCompleted(int puzzleID)
+        {
+            return _completedPuzzleIDs.Contains(puzzleID);
         }
         
         public void SendPuzzleComplete(int puzzleID)
@@ -3162,7 +3306,7 @@ namespace Crawlspace2MP
             _writer.Put(puzzleID);
             _writer.Put(PuzzleMaster.totalCompletedPuzzles);
             SendToAllPeers(true);
-            Plugin.Log.LogInfo($"[Puzzle] Sent puzzle complete: puzzleID={puzzleID}, total={PuzzleMaster.totalCompletedPuzzles}");
+            Plugin.LogDebug($"[Puzzle] Sent puzzle complete: puzzleID={puzzleID}, total={PuzzleMaster.totalCompletedPuzzles}");
         }
         
         private void HandlePuzzleComplete(PacketReader reader)
@@ -3170,12 +3314,27 @@ namespace Crawlspace2MP
             int puzzleID = reader.GetInt();
             int remoteTotalCompleted = reader.GetInt();
             
-            Plugin.Log.LogInfo($"[Puzzle] Received puzzle complete: puzzleID={puzzleID}, remoteTotal={remoteTotalCompleted}, localTotal={PuzzleMaster.totalCompletedPuzzles}");
+            Plugin.LogDebug($"[Puzzle] Received puzzle complete: puzzleID={puzzleID}, remoteTotal={remoteTotalCompleted}, localTotal={PuzzleMaster.totalCompletedPuzzles}");
             
             // Check if we've already marked this puzzle as complete
             if (_completedPuzzleIDs.Contains(puzzleID))
             {
-                Plugin.Log.LogInfo($"[Puzzle] Puzzle {puzzleID} already marked complete, skipping");
+                Plugin.LogDebug($"[Puzzle] Puzzle {puzzleID} already marked complete, skipping");
+                return;
+            }
+            
+            // If the local player currently has their battery in this puzzle,
+            // don't force-complete it — let them finish their own attempt.
+            // The puzzle will be marked complete when THEY call onWin().
+            // We still track it so we don't double-count later.
+            bool localBatteryHere = puzzleID == BackpackControl.batteryLocationID && BackpackControl.batteryCharge > 0f;
+            if (localBatteryHere)
+            {
+                Plugin.LogDebug($"[Puzzle] Local battery is in puzzle {puzzleID} — skipping remote completion (local player is solving it)");
+                // Don't add to _completedPuzzleIDs — let the local onWin handle it
+                // But DO increment the counter since the remote player legitimately completed it
+                PuzzleMaster.totalCompletedPuzzles++;
+                _completedPuzzleIDs.Add(puzzleID);
                 return;
             }
             
@@ -3184,7 +3343,7 @@ namespace Crawlspace2MP
             
             // Increment our local counter (don't just set it to remote value - that causes race conditions!)
             PuzzleMaster.totalCompletedPuzzles++;
-            Plugin.Log.LogInfo($"[Puzzle] Incremented local total to {PuzzleMaster.totalCompletedPuzzles}");
+            Plugin.LogDebug($"[Puzzle] Incremented local total to {PuzzleMaster.totalCompletedPuzzles}");
             
             // Find the puzzle controller with this ID and mark it complete
             if (_puzzleMaster == null)
@@ -3205,8 +3364,19 @@ namespace Crawlspace2MP
                     if (controller != null && controller.thisPuzzleID == puzzleID)
                     {
                         var pcType = typeof(PuzzleController);
-                        var completedField = pcType.GetField("puzzleHasCompleted", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                        var completedField = pcType.GetField("puzzleHasCompleted", flags);
                         completedField.SetValue(controller, true);
+                        
+                        // Reset totalCompletions so if someone puts battery in this
+                        // puzzle later, it won't auto-win from stale completion count
+                        var totalCompField = pcType.GetField("totalCompletions", flags);
+                        if (totalCompField != null)
+                            totalCompField.SetValue(controller, 0);
+                        
+                        // Clear the board so it doesn't show stale blocks
+                        for (int i = 0; i < controller.cubeList.Length; i++)
+                            controller.cubeList[i].setThisID(0);
                         
                         if (controller.fanspin != null)
                             controller.fanspin.isOn = true;
@@ -3215,7 +3385,7 @@ namespace Crawlspace2MP
                         // Play win audio
                         controller.winAudio?.Play();
                         
-                        Plugin.Log.LogInfo($"Marked puzzle {puzzleID} as complete");
+                        Plugin.LogDebug($"Marked puzzle {puzzleID} as complete (board cleared)");
                         break;
                     }
                 }
@@ -3644,6 +3814,11 @@ namespace Crawlspace2MP
             _localIsGhost = true;
             _ghostSceneToReload = currentScene;
             _pendingGhostTeleport = true;
+            
+            // Clear local battery state — ghost has no battery
+            BackpackControl.batteryLocationID = 0;
+            BackpackControl.batteryCharge = 0f;
+            BackpackControl.batteryIsInBackpack = false;
             
             // CRITICAL: Always set the intercept flag when becoming a ghost
             // Even if we're already a ghost (e.g., client died, then host dies)

@@ -1,8 +1,67 @@
 using System;
-using Steamworks;
+using System.Collections.Generic;
 
 namespace Crawlspace2MP
 {
+    /// <summary>
+    /// Platform-agnostic network transport interface.
+    /// Implemented by SteamTransport (PC) and EOSTransport (Quest/crossplay).
+    /// </summary>
+    public interface INetworkTransport
+    {
+        // --- State ---
+        bool IsRunning { get; }
+        bool IsHost { get; }
+        bool IsConnected { get; }
+        bool IsInLobby { get; }
+        bool IsJoining { get; }
+        bool IsLobbyLocked { get; }
+        int ConnectedPeerCount { get; }
+        int Ping { get; }
+
+        // --- Core events (peer ID based) ---
+        event Action<int> OnPeerConnected;
+        event Action<int> OnPeerDisconnected;
+        event Action<int, PacketReader> OnDataReceived;
+
+        // --- Lobby events ---
+        event Action<string> OnLobbyCreated;   // lobby ID string
+        event Action<string> OnLobbyJoined;    // lobby ID string
+        event Action<string> OnJoinFailed;     // reason
+        event Action OnLobbyLeft;
+        event Action<string> OnPlayerJoined;   // player display name
+        event Action<string> OnPlayerLeft;     // player display name
+
+        // --- Version / migration ---
+        event Action<string> OnVersionMismatch;
+        event Action OnBecameHost;
+
+        // --- Lifecycle ---
+        bool Initialize();
+        void Shutdown();
+        void Update();
+
+        // --- Hosting / Joining ---
+        void StartHost(int port = 0);
+        void Connect(string address, int port);
+        void Disconnect();
+        void LockLobby();
+        void UnlockLobby();
+        void JoinLobby(string lobbyId);
+        void ProcessPendingJoin();
+        void BecomeHost();
+
+        // --- Sending data ---
+        void SendToAll(byte[] data, bool reliable = true);
+        void SendTo(int peerId, byte[] data, bool reliable = true);
+
+        // --- Info ---
+        string GetLobbyId();
+        string GetPlayerName();
+        List<string> GetConnectedPlayerNames();
+        void InviteFriends();
+    }
+
     /// <summary>
     /// Simple byte writer for network packets
     /// </summary>
@@ -101,7 +160,7 @@ namespace Crawlspace2MP
     }
     
     /// <summary>
-    /// Simple byte reader for network packets (replaces LiteNetLib.NetPacketReader)
+    /// Simple byte reader for network packets
     /// </summary>
     public class PacketReader
     {

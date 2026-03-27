@@ -9,7 +9,7 @@ namespace Crawlspace2MP
     /// Steam-based network transport using Facepunch.Steamworks
     /// Uses Steam lobbies for matchmaking and P2P for data transfer
     /// </summary>
-    public class SteamTransport
+    public class SteamTransport : INetworkTransport
     {
         public bool IsRunning { get; private set; }
         public bool IsHost { get; private set; }
@@ -35,20 +35,46 @@ namespace Crawlspace2MP
         private const byte TRANSPORT_VERSION_MISMATCH = 253;
         private const byte TRANSPORT_HOST_MIGRATION = 254;
         
-        // Events
+        // Events (INetworkTransport)
         public event Action<int> OnPeerConnected;
         public event Action<int> OnPeerDisconnected;
         public event Action<int, PacketReader> OnDataReceived;
-        public event Action<string> OnVersionMismatch;  // Remote player has wrong version
-        public event Action OnBecameHost;  // This client became host due to migration
+        public event Action<string> OnVersionMismatch;
+        public event Action OnBecameHost;
         
-        // Steam-specific events
+        // Interface lobby events (string-based, platform-agnostic)
+        event Action<string> INetworkTransport.OnLobbyCreated
+        {
+            add { _onLobbyCreatedString += value; }
+            remove { _onLobbyCreatedString -= value; }
+        }
+        event Action<string> INetworkTransport.OnLobbyJoined
+        {
+            add { _onLobbyJoinedString += value; }
+            remove { _onLobbyJoinedString -= value; }
+        }
+        event Action<string> INetworkTransport.OnPlayerJoined
+        {
+            add { _onPlayerJoinedString += value; }
+            remove { _onPlayerJoinedString -= value; }
+        }
+        event Action<string> INetworkTransport.OnPlayerLeft
+        {
+            add { _onPlayerLeftString += value; }
+            remove { _onPlayerLeftString -= value; }
+        }
+        private event Action<string> _onLobbyCreatedString;
+        private event Action<string> _onLobbyJoinedString;
+        private event Action<string> _onPlayerJoinedString;
+        private event Action<string> _onPlayerLeftString;
+        
+        // Steam-specific events (used by Plugin.cs on PC for richer info)
         public event Action<Lobby> OnLobbyCreated;
         public event Action<Lobby> OnLobbyJoined;
-        public event Action<string> OnJoinFailed;  // Reason for failure
+        public event Action<string> OnJoinFailed;
         public event Action OnLobbyLeft;
-        public event Action<Friend> OnPlayerJoined;  // With Steam friend info
-        public event Action<Friend> OnPlayerLeft;    // With Steam friend info
+        public event Action<Friend> OnPlayerJoined;
+        public event Action<Friend> OnPlayerLeft;
         
         // Map SteamId to simple int peer IDs for compatibility
         private Dictionary<SteamId, int> _steamIdToPeerId = new Dictionary<SteamId, int>();
@@ -345,7 +371,7 @@ namespace Crawlspace2MP
         
         #region Lobby Management
         
-        private async void CreateLobbyAsync(int maxPlayers = 4)
+        private async void CreateLobbyAsync(int maxPlayers = 10)
         {
             try
             {
@@ -369,6 +395,7 @@ namespace Crawlspace2MP
                     Plugin.Log.LogInfo($"Lobby created! ID: {CurrentLobby.Id}");
                     UpdateRichPresence();
                     OnLobbyCreated?.Invoke(CurrentLobby);
+                    _onLobbyCreatedString?.Invoke(CurrentLobby.Id.Value.ToString());
                 }
             }
             catch (Exception ex)
@@ -445,6 +472,7 @@ namespace Crawlspace2MP
                     
                     UpdateRichPresence();
                     OnLobbyJoined?.Invoke(lobby);
+                    _onLobbyJoinedString?.Invoke(lobby.Id.Value.ToString());
                 }
                 else
                 {
@@ -489,6 +517,13 @@ namespace Crawlspace2MP
             IsHost = false;
             IsRunning = true;
             JoinLobbyAsync(lobbyId);
+        }
+        
+        // INetworkTransport.JoinLobby(string) — parses string to SteamId
+        public void JoinLobby(string lobbyId)
+        {
+            if (ulong.TryParse(lobbyId, out ulong id))
+                JoinLobby(new SteamId { Value = id });
         }
         
         private void LeaveLobby()
@@ -743,6 +778,7 @@ namespace Crawlspace2MP
             
             UpdateRichPresence();
             OnLobbyJoined?.Invoke(lobby);
+            _onLobbyJoinedString?.Invoke(lobby.Id.Value.ToString());
         }
         
         private void HandleLobbyMemberJoined(Lobby lobby, Friend friend)
@@ -760,6 +796,7 @@ namespace Crawlspace2MP
             }
             UpdateRichPresence();
             OnPlayerJoined?.Invoke(friend);
+            _onPlayerJoinedString?.Invoke(friend.Name);
         }
         
         private void HandleLobbyMemberLeave(Lobby lobby, Friend friend)
@@ -769,6 +806,7 @@ namespace Crawlspace2MP
             bool wasHost = friend.Id == lobby.Owner.Id;
             
             OnPlayerLeft?.Invoke(friend);
+            _onPlayerLeftString?.Invoke(friend.Name);
             RemovePeer(friend.Id);
             UpdateRichPresence();
             
@@ -1035,6 +1073,86 @@ namespace Crawlspace2MP
             public bool IsJoinable;
             public ulong LobbyId;
             public string Status;
+        }
+        
+        /// <summary>
+        /// Invite a specific friend to the current lobby (no Steam overlay needed)
+        /// </summary>
+        public bool InviteFriend(SteamId friendId)
+        {
+            if (!IsInLobby)
+            {
+                Plugin.Log.LogWarning("Cannot invite friend - not in a lobby");
+                return false;
+            }
+            
+            bool result = CurrentLobby.InviteFriend(friendId);
+            Plugin.Log.LogInfo($"Invited {friendId} to lobby: {(result ? "success" : "failed")}");
+            return result;
+        }
+        
+        /// <summary>
+        /// Get all online Steam friends (not just ones playing this game)
+        /// </summary>
+        public List<FriendGameInfo> GetAllOnlineFriends()
+        {
+            var result = new List<FriendGameInfo>();
+            if (!_initialized) return result;
+            
+            try
+            {
+                foreach (var friend in SteamFriends.GetFriends())
+                {
+                    if (!friend.IsOnline) continue;
+                    
+                    var info = new FriendGameInfo
+                    {
+                        Friend = friend,
+                        Name = friend.Name,
+                        SteamId = friend.Id,
+                        IsInGame = friend.IsPlayingThisGame,
+                        IsJoinable = false,
+                        LobbyId = 0,
+                        Status = friend.IsPlayingThisGame ? "Playing Crawlspace 2" : "Online"
+                    };
+                    
+                    // Check if joinable
+                    if (friend.IsPlayingThisGame)
+                    {
+                        string connectStr = friend.GetRichPresence("connect");
+                        if (!string.IsNullOrEmpty(connectStr) && connectStr.StartsWith("+connect_lobby"))
+                        {
+                            string[] parts = connectStr.Split(' ');
+                            if (parts.Length >= 2 && ulong.TryParse(parts[1], out ulong lobbyId))
+                            {
+                                info.IsJoinable = true;
+                                info.LobbyId = lobbyId;
+                                info.Status = "In Lobby - Joinable";
+                            }
+                        }
+                        
+                        string status = friend.GetRichPresence("status");
+                        if (!string.IsNullOrEmpty(status))
+                            info.Status = status;
+                    }
+                    
+                    result.Add(info);
+                }
+                
+                // Sort: playing this game first, then by name
+                result.Sort((a, b) =>
+                {
+                    if (a.IsInGame != b.IsInGame) return b.IsInGame.CompareTo(a.IsInGame);
+                    if (a.IsJoinable != b.IsJoinable) return b.IsJoinable.CompareTo(a.IsJoinable);
+                    return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+                });
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"Error getting friends list: {ex.Message}");
+            }
+            
+            return result;
         }
         
         /// <summary>

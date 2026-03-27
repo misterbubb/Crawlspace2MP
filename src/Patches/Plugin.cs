@@ -14,20 +14,28 @@ namespace Crawlspace2MP
     {
         public static ManualLogSource Log { get; private set; }
         public static GameObject HelmetPrefab { get; private set; }
+        public static bool VerboseLogging { get; private set; }
         
         /// <summary>
-        /// Log only in debug builds - use for verbose/spammy messages
+        /// Log verbose/diagnostic messages. Only outputs when VerboseLogging is enabled
+        /// in the config (BepInEx/config/com.crawlspace2.multiplayer.cfg).
         /// </summary>
-        [System.Diagnostics.Conditional("DEBUG")]
         public static void LogDebug(string message)
         {
-            Log?.LogInfo(message);
+            if (VerboseLogging) Log?.LogInfo(message);
         }
 
         private void Awake()
         {
             Log = Logger;
+            
+            // Config
+            var verboseConfig = Config.Bind("Logging", "VerboseLogging", false,
+                "Enable detailed diagnostic logging. Turn this on when reporting bugs, then send BepInEx/LogOutput.log");
+            VerboseLogging = verboseConfig.Value;
+            
             Log.LogInfo($"Crawlspace 2 Multiplayer v{PluginInfo.PLUGIN_VERSION} loading...");
+            if (VerboseLogging) Log.LogInfo("[Config] Verbose logging ENABLED");
             
             // CRITICAL: Validate reflection before doing anything else
             ValidateReflection();
@@ -194,25 +202,27 @@ namespace Crawlspace2MP
         public SteamTransport Steam { get; private set; }
         public VoiceChat VoiceChat { get; private set; } // Disabled - experimental, will be replaced
         public SpectateSystem Spectate { get; private set; }
+        public MultiplayerUI WorldUI { get; private set; }
         
         // State shortcuts
         public bool IsHost => Steam?.IsHost ?? false;
         public bool IsConnected => Steam?.IsConnected ?? false;
         public bool IsRunning => Steam?.IsRunning ?? false;
         public bool IsJoining => Steam?.IsJoining ?? false;
+        public string LastLobbyId => _lastLobbyId;
         
-        private string _lobbyIdInput = "";
+        // Public status message for world UI access
+        public string StatusMessage
+        {
+            get => _statusMessage;
+            set => _statusMessage = value;
+        }
+        
         private string _statusMessage = "Initializing Steam...";
         private string _connectedPlayerName = "";
-        private Rect _windowRect = new Rect(10, 10, 320, 480);
         private bool _steamInitialized = false;
-        private float _copiedTime = -10f;  // Time when copy was clicked (-10 so it starts as "Copy")
+        private float _copiedTime = -10f;
         private bool _uiHidden = false;  // Toggle with Insert key for streamers
-        private bool _showLobbyCode = false;  // Hidden by default for streamers
-        private bool _showFriendsList = false;  // Toggle friends list
-        private Vector2 _friendsScrollPos = Vector2.zero;  // Scroll position for friends list
-        private float _lastFriendsRefresh = 0f;  // Last time friends list was refreshed
-        private List<SteamTransport.FriendGameInfo> _cachedFriends = new List<SteamTransport.FriendGameInfo>();
         
         // ===== Trailer staging tools (F1/F2/F3) =====
 #if DEBUG
@@ -262,8 +272,9 @@ namespace Crawlspace2MP
             Steam.OnVersionMismatch += OnVersionMismatch;
             Steam.OnBecameHost += OnBecameHost;
             
-            // Subscribe to scene changes for lobby locking
+            // Subscribe to scene changes for lobby locking and world UI
             UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoadedForLobby;
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoadedForUI;
             
             // Initialize Steam
             if (Steam.Initialize())
@@ -283,14 +294,14 @@ namespace Crawlspace2MP
         
         private void OnSteamLobbyCreated(Steamworks.Data.Lobby lobby)
         {
-            _lobbyIdInput = lobby.Id.Value.ToString();
+            string lobbyId = lobby.Id.Value.ToString();
             _statusMessage = "Lobby created! Code auto-copied";
             
             // Auto-copy lobby ID to clipboard
-            GUIUtility.systemCopyBuffer = _lobbyIdInput;
+            GUIUtility.systemCopyBuffer = lobbyId;
             _copiedTime = Time.realtimeSinceStartup;
             
-            Plugin.Log.LogInfo($"Lobby created: {_lobbyIdInput} (copied to clipboard)");
+            Plugin.Log.LogInfo($"Lobby created: {lobbyId} (copied to clipboard)");
         }
         
         private void OnSteamLobbyJoined(Steamworks.Data.Lobby lobby)
@@ -367,9 +378,8 @@ namespace Crawlspace2MP
             _sparkyLunging = false;
 #endif
             
-            // Lock lobby when entering a night level, unlock when in Home/Intro
-            bool isLobbyScene = scene.name.Equals("Home", System.StringComparison.OrdinalIgnoreCase) ||
-                                scene.name.IndexOf("Intro", System.StringComparison.OrdinalIgnoreCase) >= 0;
+            // Lock lobby when entering a night level, unlock when in Home
+            bool isLobbyScene = scene.name.Equals("Home", System.StringComparison.OrdinalIgnoreCase);
             
             if (isLobbyScene)
             {
@@ -379,6 +389,80 @@ namespace Crawlspace2MP
             {
                 Steam.LockLobby();
             }
+        }
+        
+        private GameObject _tutorialSign;
+        
+        private void OnSceneLoadedForUI(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
+        {
+            bool isHome = scene.name.Equals("Home", System.StringComparison.OrdinalIgnoreCase);
+            bool isPreHome = scene.name.Equals("PreHome", System.StringComparison.OrdinalIgnoreCase);
+            
+            // Tutorial sign — only in PreHome, positioned where the MP UI normally goes
+            if (_tutorialSign != null) { Destroy(_tutorialSign); _tutorialSign = null; }
+            if (isPreHome)
+            {
+                _tutorialSign = CreateTutorialSign();
+            }
+            
+            // Multiplayer UI — only in Home (not PreHome)
+            if (isHome)
+            {
+                if (WorldUI == null)
+                {
+                    WorldUI = gameObject.AddComponent<MultiplayerUI>();
+                }
+                WorldUI.Initialize(this);
+            }
+            else
+            {
+                WorldUI?.Hide();
+            }
+        }
+        
+        private GameObject CreateTutorialSign()
+        {
+            var sign = new GameObject("MP_TutorialSign");
+            sign.transform.position = new Vector3(-0.2434f, 1.782f, -3.8182f);
+            sign.transform.rotation = Quaternion.Euler(0f, 180f, 0f);
+            
+            var canvas = sign.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.WorldSpace;
+            canvas.sortingOrder = 90;
+            
+            var crt = canvas.GetComponent<RectTransform>();
+            crt.sizeDelta = new Vector2(400f, 120f);
+            crt.localScale = Vector3.one * 0.001f;
+            
+            // Background
+            var bg = new GameObject("BG", typeof(RectTransform));
+            bg.transform.SetParent(crt, false);
+            var bgImg = bg.AddComponent<UnityEngine.UI.Image>();
+            bgImg.color = new UnityEngine.Color(0.07f, 0.07f, 0.12f, 0.9f);
+            var bgR = bg.GetComponent<RectTransform>();
+            bgR.anchorMin = Vector2.zero; bgR.anchorMax = Vector2.one;
+            bgR.offsetMin = bgR.offsetMax = Vector2.zero;
+            var ol = bg.AddComponent<UnityEngine.UI.Outline>();
+            ol.effectColor = new UnityEngine.Color(1f, 0.85f, 0.45f, 0.5f);
+            ol.effectDistance = new Vector2(2, 2);
+            
+            // Text
+            var textObj = new GameObject("Text", typeof(RectTransform));
+            textObj.transform.SetParent(crt, false);
+            var textR = textObj.GetComponent<RectTransform>();
+            textR.anchorMin = Vector2.zero; textR.anchorMax = Vector2.one;
+            textR.offsetMin = new Vector2(12, 8); textR.offsetMax = new Vector2(-12, -8);
+            
+            var text = textObj.AddComponent<UnityEngine.UI.Text>();
+            var font = UnityEngine.Font.CreateDynamicFontFromOSFont("Arial", 16);
+            if (font == null) font = Resources.GetBuiltinResource<UnityEngine.Font>("Arial.ttf");
+            text.font = font;
+            text.fontSize = 22;
+            text.alignment = TextAnchor.MiddleCenter;
+            text.color = new UnityEngine.Color(1f, 0.85f, 0.45f, 1f);
+            text.text = "You must complete Night 0\nbefore you can play multiplayer!";
+            
+            return sign;
         }
 
         private void Update()
@@ -906,25 +990,15 @@ namespace Crawlspace2MP
         
         private void OnGUI()
         {
-            // Skip all UI rendering if hidden (Insert key toggle)
             if (_uiHidden) return;
             
-            string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            
-            // Show small connection indicator when connected
+            // HUD connection indicator (top-right corner)
             if (IsRunning && IsConnected)
             {
                 int peerCount = Steam.ConnectedPeerCount;
                 string role = IsHost ? "Host" : "Client";
                 int ping = Steam.Ping;
-                
-                // Check if we're a ghost
                 bool isGhost = PlayerSync?.IsLocalGhost ?? false;
-                
-                // Color ping based on quality
-                string pingColor = ping < 50 ? "green" : (ping < 100 ? "yellow" : "red");
-                
-                // Adjust box height if ghost
                 float boxHeight = isGhost ? 85f : 65f;
                 
                 GUI.backgroundColor = isGhost ? new UnityEngine.Color(0.3f, 0.3f, 0.5f, 0.8f) : new UnityEngine.Color(0f, 0.5f, 0f, 0.8f);
@@ -932,7 +1006,6 @@ namespace Crawlspace2MP
                 GUI.Box(new Rect(Screen.width - 160, 10, 150, boxHeight), "");
                 GUI.Label(new Rect(Screen.width - 155, 15, 140, 20), $"MP: {role} ({peerCount + 1}P)");
                 
-                // Ping display with color
                 if (ping < 50)
                     GUI.contentColor = new UnityEngine.Color(0.5f, 1f, 0.5f);
                 else if (ping < 100)
@@ -944,11 +1017,8 @@ namespace Crawlspace2MP
                 
                 float remoteBattery = PlayerSync.GetRemoteBatteryCharge();
                 if (remoteBattery >= 0)
-                {
                     GUI.Label(new Rect(Screen.width - 155, 49, 140, 20), $"Partner: {remoteBattery:F0}%");
-                }
                 
-                // Ghost indicator
                 if (isGhost)
                 {
                     GUI.contentColor = new UnityEngine.Color(0.7f, 0.7f, 1f);
@@ -957,315 +1027,12 @@ namespace Crawlspace2MP
                 }
             }
             
-            // ===== Debug mode UI (F4) =====
 #if DEBUG
             if (DebugEntitiesDisabled)
-            {
                 DrawDebugActorUI();
-            }
 #endif
-            
-            // Show full UI in Home/Intro scene or when not connected
-            bool isLobbyScene = currentScene.Equals("Home", System.StringComparison.OrdinalIgnoreCase) ||
-                                currentScene.IndexOf("Intro", System.StringComparison.OrdinalIgnoreCase) >= 0;
-            if (!isLobbyScene && IsConnected)
-                return;
-            
-            GUI.backgroundColor = new UnityEngine.Color(0.1f, 0.1f, 0.1f, 0.95f);
-            GUI.contentColor = UnityEngine.Color.white;
-            _windowRect = GUI.Window(12345, _windowRect, DrawWindow, "Crawlspace 2 MP (Steam)");
         }
 
-        private void DrawWindow(int windowId)
-        {
-            GUILayout.BeginVertical();
-            
-            // Check scene state - Home and Intro are both "lobby" areas
-            string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            bool isLobbyScene = currentScene.Equals("Home", System.StringComparison.OrdinalIgnoreCase) ||
-                                currentScene.IndexOf("Intro", System.StringComparison.OrdinalIgnoreCase) >= 0;
-            bool isInGame = IsRunning && IsConnected && !isLobbyScene;
-            
-            // Show Steam username at top
-            if (_steamInitialized)
-            {
-                GUI.contentColor = new UnityEngine.Color(0.7f, 0.9f, 1f);
-                GUILayout.Label($"👤 {Steam.GetPlayerName()}");
-                GUI.contentColor = UnityEngine.Color.white;
-            }
-            
-            // Status with color coding
-            if (_statusMessage.Contains("joined") || _statusMessage.Contains("Connected") || _statusMessage.Contains("created"))
-                GUI.contentColor = new UnityEngine.Color(0.5f, 1f, 0.5f);
-            else if (_statusMessage.Contains("failed") || _statusMessage.Contains("left") || _statusMessage.Contains("Disconnected") || _statusMessage.Contains("not found") || _statusMessage.Contains("Return"))
-                GUI.contentColor = new UnityEngine.Color(1f, 0.5f, 0.5f);
-            else if (_statusMessage.Contains("Joining") || _statusMessage.Contains("Creating"))
-                GUI.contentColor = new UnityEngine.Color(1f, 0.9f, 0.5f);
-            else
-                GUI.contentColor = UnityEngine.Color.white;
-            
-            GUILayout.Label($"Status: {_statusMessage}");
-            GUI.contentColor = UnityEngine.Color.white;
-            
-            if (!_steamInitialized)
-            {
-                GUILayout.Space(10);
-                GUILayout.Label("Steam is required for multiplayer.");
-                GUILayout.Label("Make sure Steam is running!");
-                GUILayout.Space(5);
-                GUI.contentColor = new UnityEngine.Color(0.5f, 0.5f, 0.5f);
-                GUILayout.Label("Press Insert to hide UI");
-                GUI.contentColor = UnityEngine.Color.white;
-                GUILayout.EndVertical();
-                GUI.DragWindow();
-                return;
-            }
-            
-            // Show connected players
-            if (IsConnected)
-            {
-                GUILayout.Space(5);
-                var playerNames = Steam.GetConnectedPlayerNames();
-                if (playerNames.Count > 0)
-                {
-                    GUI.contentColor = new UnityEngine.Color(0.8f, 1f, 0.8f);
-                    GUILayout.Label($"🎮 Playing with: {string.Join(", ", playerNames)}");
-                    GUI.contentColor = UnityEngine.Color.white;
-                }
-                GUILayout.Label($"Total Players: {Steam.ConnectedPeerCount + 1}");
-            }
-            
-            GUILayout.Space(10);
-            
-            // === NOT CONNECTED STATE ===
-            if (!IsRunning && !IsJoining)
-            {
-                if (isLobbyScene)
-                {
-                    // In Home/Intro - show host/join options
-                    if (GUILayout.Button("🎮 Host Game", GUILayout.Height(35)))
-                        StartHosting();
-                    
-                    GUILayout.Space(10);
-                    GUILayout.Label("Join via Lobby ID:");
-                    _lobbyIdInput = GUILayout.TextField(_lobbyIdInput);
-                    
-                    if (GUILayout.Button("🔗 Join Lobby", GUILayout.Height(35)))
-                        JoinSteamLobby();
-                    
-                    GUILayout.Space(5);
-                    GUI.contentColor = new UnityEngine.Color(0.6f, 0.6f, 0.6f);
-                    GUILayout.Label("Or: Right-click friend → Join Game");
-                    GUI.contentColor = UnityEngine.Color.white;
-                    
-                    // === FRIENDS LIST ===
-                    GUILayout.Space(10);
-                    GUILayout.BeginHorizontal();
-                    string friendsToggleText = _showFriendsList ? "▼ Friends Playing" : "▶ Friends Playing";
-                    if (GUILayout.Button(friendsToggleText, GUILayout.Height(25)))
-                    {
-                        _showFriendsList = !_showFriendsList;
-                        if (_showFriendsList)
-                        {
-                            _cachedFriends = Steam.GetFriendsPlayingGame();
-                            _lastFriendsRefresh = Time.realtimeSinceStartup;
-                        }
-                    }
-                    if (_showFriendsList && GUILayout.Button("🔄", GUILayout.Width(30), GUILayout.Height(25)))
-                    {
-                        _cachedFriends = Steam.GetFriendsPlayingGame();
-                        _lastFriendsRefresh = Time.realtimeSinceStartup;
-                    }
-                    GUILayout.EndHorizontal();
-                    
-                    if (_showFriendsList)
-                    {
-                        GUI.backgroundColor = new UnityEngine.Color(0.15f, 0.15f, 0.2f, 0.95f);
-                        GUILayout.BeginVertical("box");
-                        
-                        if (_cachedFriends.Count == 0)
-                        {
-                            GUI.contentColor = new UnityEngine.Color(0.6f, 0.6f, 0.6f);
-                            GUILayout.Label("No friends playing Crawlspace 2");
-                            GUI.contentColor = UnityEngine.Color.white;
-                        }
-                        else
-                        {
-                            _friendsScrollPos = GUILayout.BeginScrollView(_friendsScrollPos, GUILayout.Height(100));
-                            foreach (var friend in _cachedFriends)
-                            {
-                                GUILayout.BeginHorizontal();
-                                
-                                // Friend name and status
-                                GUI.contentColor = friend.IsJoinable ? new UnityEngine.Color(0.5f, 1f, 0.5f) : UnityEngine.Color.white;
-                                GUILayout.Label(friend.Name, GUILayout.Width(120));
-                                
-                                GUI.contentColor = new UnityEngine.Color(0.7f, 0.7f, 0.7f);
-                                GUILayout.Label(friend.Status, GUILayout.Width(80));
-                                GUI.contentColor = UnityEngine.Color.white;
-                                
-                                // Join button if joinable
-                                if (friend.IsJoinable)
-                                {
-                                    GUI.backgroundColor = new UnityEngine.Color(0.2f, 0.5f, 0.2f);
-                                    if (GUILayout.Button("Join", GUILayout.Width(45)))
-                                    {
-                                        Steam.JoinFriendGame(friend.LobbyId);
-                                        _statusMessage = $"Joining {friend.Name}...";
-                                    }
-                                    GUI.backgroundColor = new UnityEngine.Color(0.15f, 0.15f, 0.2f, 0.95f);
-                                }
-                                
-                                GUILayout.EndHorizontal();
-                            }
-                            GUILayout.EndScrollView();
-                        }
-                        
-                        GUILayout.EndVertical();
-                        GUI.backgroundColor = new UnityEngine.Color(0.1f, 0.1f, 0.1f, 0.95f);
-                    }
-                }
-                else
-                {
-                    // Not in Home - tell user to go back
-                    GUILayout.Space(5);
-                    GUI.backgroundColor = new UnityEngine.Color(0.4f, 0.3f, 0.1f);
-                    GUILayout.BeginVertical("box");
-                    GUI.contentColor = new UnityEngine.Color(1f, 0.85f, 0.5f);
-                    GUILayout.Label("🏠 Go to Home to play multiplayer");
-                    GUILayout.Space(3);
-                    GUI.contentColor = new UnityEngine.Color(0.8f, 0.8f, 0.8f);
-                    GUILayout.Label("Host and join from the house area,");
-                    GUILayout.Label("then start the night together.");
-                    GUI.contentColor = UnityEngine.Color.white;
-                    GUILayout.EndVertical();
-                    GUI.backgroundColor = new UnityEngine.Color(0.1f, 0.1f, 0.1f, 0.95f);
-                }
-            }
-            
-            // === JOINING STATE ===
-            if (IsJoining)
-            {
-                GUILayout.Space(5);
-                GUI.contentColor = new UnityEngine.Color(1f, 0.9f, 0.5f);
-                GUILayout.Label("⏳ Joining lobby...");
-                GUI.contentColor = UnityEngine.Color.white;
-                
-                if (GUILayout.Button("Cancel", GUILayout.Height(28)))
-                {
-                    Disconnect();
-                    _statusMessage = "Join cancelled";
-                }
-            }
-            
-            // === HOSTING/CONNECTED STATE ===
-            if (IsHost && Steam.IsInLobby)
-            {
-                GUILayout.Space(5);
-                
-                if (isLobbyScene)
-                {
-                    // In Home/Intro as host - can invite
-                    GUI.backgroundColor = new UnityEngine.Color(0.2f, 0.5f, 0.8f);
-                    if (GUILayout.Button("📨 Invite Friends", GUILayout.Height(30)))
-                    {
-                        Steam.InviteFriends();
-                    }
-                    GUI.backgroundColor = new UnityEngine.Color(0.1f, 0.1f, 0.1f, 0.95f);
-                    
-                    GUILayout.Space(5);
-                    
-                    // Toggle to show/hide lobby code + copy button
-                    GUILayout.BeginHorizontal();
-                    string toggleText = _showLobbyCode ? "Hide Code" : "Show Code";
-                    if (GUILayout.Button(toggleText, GUILayout.Width(80)))
-                    {
-                        _showLobbyCode = !_showLobbyCode;
-                    }
-                    
-                    bool recentlyCopied = (Time.realtimeSinceStartup - _copiedTime) < 2f;
-                    string copyText = recentlyCopied ? "✓ Copied!" : "📋 Copy";
-                    if (GUILayout.Button(copyText, GUILayout.Width(80)))
-                    {
-                        GUIUtility.systemCopyBuffer = _lobbyIdInput;
-                        _copiedTime = Time.realtimeSinceStartup;
-                    }
-                    GUILayout.FlexibleSpace();
-                    GUILayout.EndHorizontal();
-                    
-                    if (_showLobbyCode)
-                    {
-                        GUI.contentColor = new UnityEngine.Color(0.9f, 0.9f, 0.6f);
-                        GUILayout.TextField(_lobbyIdInput);
-                        GUI.contentColor = UnityEngine.Color.white;
-                    }
-                }
-                else
-                {
-                    // In game as host - lobby is locked
-                    GUI.contentColor = new UnityEngine.Color(0.7f, 0.7f, 0.7f);
-                    GUILayout.Label("🔒 Lobby locked during game");
-                    GUILayout.Label("New players can join in Home");
-                    GUI.contentColor = UnityEngine.Color.white;
-                }
-            }
-            
-            // === DISCONNECT & VOICE ===
-            if (IsRunning && !IsJoining)
-            {
-                GUILayout.Space(10);
-                
-                GUI.backgroundColor = new UnityEngine.Color(0.6f, 0.2f, 0.2f);
-                if (GUILayout.Button("Disconnect", GUILayout.Height(28)))
-                    Disconnect();
-                GUI.backgroundColor = new UnityEngine.Color(0.1f, 0.1f, 0.1f, 0.95f);
-            }
-            
-            // Footer hints
-            GUILayout.FlexibleSpace();
-            GUI.contentColor = new UnityEngine.Color(0.5f, 0.5f, 0.5f);
-            GUILayout.Label("Press Insert to hide UI");
-            GUI.contentColor = UnityEngine.Color.white;
-            
-            GUILayout.EndVertical();
-            GUI.DragWindow();
-        }
-        
-        private void JoinSteamLobby()
-        {
-            // Only allow joining in Home/Intro scene
-            string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            bool isLobbyScene = currentScene.Equals("Home", System.StringComparison.OrdinalIgnoreCase) ||
-                                currentScene.IndexOf("Intro", System.StringComparison.OrdinalIgnoreCase) >= 0;
-            if (!isLobbyScene)
-            {
-                _statusMessage = "Return to Home to join!";
-                return;
-            }
-            
-            if (string.IsNullOrEmpty(_lobbyIdInput))
-            {
-                _statusMessage = "Enter a lobby ID first";
-                return;
-            }
-            
-            // Don't allow joining if already in any session
-            if (Steam.IsRunning || Steam.IsInLobby)
-            {
-                _statusMessage = "Already in a session! Disconnect first.";
-                return;
-            }
-            
-            if (ulong.TryParse(_lobbyIdInput, out ulong lobbyId))
-            {
-                Steam.JoinLobby(lobbyId);
-                _statusMessage = "Joining lobby...";
-            }
-            else
-            {
-                _statusMessage = "Invalid lobby ID";
-            }
-        }
 
         public void HostGame()
         {
@@ -1291,17 +1058,20 @@ namespace Crawlspace2MP
             _statusMessage = "Joining lobby...";
         }
         
+        private string _lastLobbyId = "";
+        
         public void DisconnectFromLobby()
         {
+            // Remember the lobby we're leaving so Paste & Join can't rejoin it
+            _lastLobbyId = Steam?.GetLobbyId() ?? "";
             Disconnect();
         }
         
         private void StartHosting()
         {
-            // Only allow hosting in Home/Intro scene
+            // Only allow hosting in Home scene
             string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            bool isLobbyScene = currentScene.Equals("Home", System.StringComparison.OrdinalIgnoreCase) ||
-                                currentScene.IndexOf("Intro", System.StringComparison.OrdinalIgnoreCase) >= 0;
+            bool isLobbyScene = currentScene.Equals("Home", System.StringComparison.OrdinalIgnoreCase);
             if (!isLobbyScene)
             {
                 _statusMessage = "Return to Home to host!";
@@ -1372,7 +1142,7 @@ namespace Crawlspace2MP
     {
         public const string PLUGIN_GUID = "com.crawlspace2.multiplayer";
         public const string PLUGIN_NAME = "Crawlspace2MP";
-        public const string PLUGIN_VERSION = "1.1.1";
+        public const string PLUGIN_VERSION = "1.1.5";
     }
     
     // Harmony patches to block client from controlling game flow
@@ -1436,15 +1206,17 @@ namespace Crawlspace2MP
             // If we're the host, send scene change BEFORE the original method runs
             if (isLobbyOwner && steam.IsRunning)
             {
-                // Call loadSelectedNight() first to populate scenename (same as original method does)
-                __instance.loadSelectedNight();
+                // Don't send if no night selected
+                if (calenderControl.nightSelected == 0)
+                    return true; // Let original handle it (it will also return early)
                 
-                // Now read the scenename field directly (it's public)
+                __instance.loadSelectedNight();
                 string sceneName = __instance.scenename;
                 
                 if (!string.IsNullOrEmpty(sceneName))
                 {
                     Plugin.Log.LogInfo($"[Host] Door entered, sending scene change: {sceneName}");
+                    PlayerSync.IsLoadingFromSync = true;
                     MPManager.Instance.PlayerSync.SendSceneChange(sceneName);
                 }
                 else
@@ -1501,6 +1273,8 @@ namespace Crawlspace2MP
                 if (!string.IsNullOrEmpty(sceneName))
                 {
                     Plugin.Log.LogInfo($"[{(isLobbyOwner ? "Host" : "Client")}] Scene exit, sending scene change: {sceneName}");
+                    // Prevent CheckSceneChange from sending a duplicate when the scene actually loads
+                    PlayerSync.IsLoadingFromSync = true;
                     MPManager.Instance.PlayerSync.SendSceneChange(sceneName);
                 }
                 else
@@ -2220,6 +1994,10 @@ namespace Crawlspace2MP
     // Removed SmileTriggerPatch - was causing infinite trigger spam
     
     // Prevent client from running random puzzle initialization - host will sync the puzzle state
+    // On client, let PuzzleMaster.Start() run normally so all puzzles are properly
+    // initialized (enableRest/thisFan sets up indicators, fans, presets correctly).
+    // The host's puzzle init will override which puzzles are active and their preset IDs.
+    // On ghost host, skip Start() so we can restore saved state instead.
     [HarmonyPatch(typeof(PuzzleMaster), "Start")]
     public class PuzzleMasterStartPatch
     {
@@ -2231,15 +2009,12 @@ namespace Crawlspace2MP
             bool isHost = MPManager.Instance.Steam.IsHost;
             bool isGhostHost = isHost && MPManager.Instance.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost;
             
-            // Skip random initialization on client (host will sync the real state)
-            // Also skip on ghost host (we'll restore saved state after Start runs)
-            if (!isHost || isGhostHost)
+            // Ghost host: skip Start() entirely — RestoreGhostPuzzleState will handle it
+            if (isGhostHost)
             {
-                // Still need to initialize the static variables
                 PuzzleMaster.totalCompletedPuzzles = 0;
                 PuzzleMaster.requiredPuzzles = __instance.totalPuzzlesThisNight;
                 
-                // Hide all map indicators until state is synced/restored
                 PuzzleController[] controllers = {
                     __instance.pCon1, __instance.pCon2, __instance.pCon3,
                     __instance.pCon4, __instance.pCon5, __instance.pCon6,
@@ -2251,12 +2026,58 @@ namespace Crawlspace2MP
                         pc.thisMapIndicator.SetActive(false);
                 }
                 
-                if (isGhostHost)
-                    Plugin.Log.LogInfo("[Ghost Host] Skipping PuzzleMaster.Start() random init - will restore saved state");
-                
+                Plugin.Log.LogInfo("[Ghost Host] Skipping PuzzleMaster.Start() random init - will restore saved state");
                 return false;
             }
+            
+            // Client AND normal host: let Start() run normally
+            // Client gets its own random init (indicators set correctly by thisFan),
+            // then TryApplyPuzzleInit overrides with host's actual state
             return true;
+        }
+    }
+    
+    // Protect puzzleHasCompleted across PuzzleController.Start() calls.
+    // Start() does: puzzleHasCompleted = false; resetBoard();
+    // We let resetBoard() run (initializes originCubeID, blockNumber, etc.) but
+    // save/restore puzzleHasCompleted so completed state from thisFan(2) or
+    // synced state isn't wiped if Start() runs after PuzzleMaster.Start().
+    [HarmonyPatch(typeof(PuzzleController), "Start")]
+    public class PuzzleControllerStartPatch
+    {
+        static void Prefix(PuzzleController __instance, out bool __state)
+        {
+            __state = false;
+            if (MPManager.Instance?.PlayerSync == null) return;
+            var steam = MPManager.Instance.Steam;
+            if (steam == null || !steam.IsRunning) return;
+            
+            bool isClient = !steam.IsHost;
+            bool isGhostHost = steam.IsHost && MPManager.Instance.PlayerSync.IsLocalGhost;
+            
+            if (isClient || isGhostHost)
+            {
+                // Save current puzzleHasCompleted before Start() resets it
+                var completedField = typeof(PuzzleController).GetField("puzzleHasCompleted", 
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                __state = completedField != null && (bool)completedField.GetValue(__instance);
+            }
+        }
+        
+        static void Postfix(PuzzleController __instance, bool __state)
+        {
+            if (!__state) return; // Was false or not in multiplayer — nothing to restore
+            
+            // Restore puzzleHasCompleted that Start() just wiped
+            var completedField = typeof(PuzzleController).GetField("puzzleHasCompleted", 
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            completedField?.SetValue(__instance, true);
+            
+            // Also re-apply fan and map indicator since resetBoard() may have cleared related state
+            if (__instance.fanspin != null) __instance.fanspin.isOn = true;
+            __instance.thisMapIndicator?.SetActive(true);
+            
+            Plugin.LogDebug($"[PuzzleControllerStartPatch] Restored completed state for puzzle {__instance.thisPuzzleID}");
         }
     }
     
@@ -2277,6 +2098,22 @@ namespace Crawlspace2MP
         }
     }
     
+    // Reset totalCompletions when a puzzle preset loads to prevent auto-win
+    // from stale completion count carried over from a previous player or night
+    [HarmonyPatch(typeof(PuzzleController), "loadPreset")]
+    public class PuzzleLoadPresetPatch
+    {
+        static void Prefix(PuzzleController __instance)
+        {
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var tcField = typeof(PuzzleController).GetField("totalCompletions", flags);
+            if (tcField != null) tcField.SetValue(__instance, 0);
+            // Also reset originCubeID so the player starts fresh
+            var ocField = typeof(PuzzleController).GetField("originCubeID", flags);
+            if (ocField != null) ocField.SetValue(__instance, -1);
+        }
+    }
+    
     // Make puzzles work when EITHER player has battery in the slot
     // This prevents resetBoard() from being called when only remote player has battery there
     [HarmonyPatch(typeof(PuzzleController), "FixedUpdate")]
@@ -2289,8 +2126,11 @@ namespace Crawlspace2MP
             
             var pcType = typeof(PuzzleController);
             
+            // Ghost players don't have a real battery — ignore stale local battery state
+            bool localIsGhost = playerSync.IsLocalGhost;
+            
             // Check if local battery is in this puzzle slot
-            bool localBatteryHere = __instance.thisPuzzleID == BackpackControl.batteryLocationID && BackpackControl.batteryCharge > 0f;
+            bool localBatteryHere = !localIsGhost && __instance.thisPuzzleID == BackpackControl.batteryLocationID && BackpackControl.batteryCharge > 0f;
             
             // If local battery is here, mostly let original run — but protect against presetID == 0
             if (localBatteryHere)
@@ -2299,8 +2139,6 @@ namespace Crawlspace2MP
                 int presetID = presetIDField != null ? (int)presetIDField.GetValue(__instance) : 0;
                 
                 // If preset hasn't been synced yet (client waiting for host init), hold timer2 below 5
-                // so loadPreset(0) never gets called (which would make the puzzle unsolvable).
-                // We set to 3 because the original FixedUpdate will increment it to 4 (not 5).
                 if (presetID == 0)
                 {
                     var timer2Field = pcType.GetField("timer2", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -2317,10 +2155,9 @@ namespace Crawlspace2MP
                 return true;
             }
             
-            // Check if remote player has battery in this puzzle's slot
-            int remoteBatteryLocation = playerSync.GetRemoteBatteryLocationID();
-            float remoteBatteryCharge = playerSync.GetRemoteBatteryCharge();
-            bool remoteBatteryHere = __instance.thisPuzzleID == remoteBatteryLocation && remoteBatteryCharge > 0f;
+            // Check if remote player has battery in this puzzle's slot (skip ghosts)
+            var remoteAtThisPuzzle = playerSync.GetRemoteBatteryAtLocation(__instance.thisPuzzleID);
+            bool remoteBatteryHere = remoteAtThisPuzzle != null && remoteAtThisPuzzle.Charge > 0f;
             
             // If remote battery is here, keep puzzle active but skip original (which would reset it)
             if (remoteBatteryHere)
@@ -2374,12 +2211,44 @@ namespace Crawlspace2MP
     [HarmonyPatch(typeof(PuzzleController), "onWin")]
     public class PuzzleCompletePatch
     {
+        // Prevent onWin from double-incrementing totalCompletedPuzzles
+        // when we already counted this puzzle from a remote completion
+        static bool Prefix(PuzzleController __instance)
+        {
+            if (MPManager.Instance?.PlayerSync == null) return true;
+            
+            // If this puzzle was already counted (remote player completed it while
+            // our battery was also in the slot), skip the totalCompletedPuzzles++
+            // that onWin() does — we already incremented it in HandlePuzzleComplete.
+            // We still want the rest of onWin to run (set completed, fan, indicator, audio).
+            if (MPManager.Instance.PlayerSync.IsPuzzleCompleted(__instance.thisPuzzleID))
+            {
+                // Run onWin logic manually WITHOUT the counter increment
+                var pcType = typeof(PuzzleController);
+                var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                pcType.GetField("puzzleHasCompleted", flags).SetValue(__instance, true);
+                if (__instance.fanspin != null) __instance.fanspin.isOn = true;
+                if (__instance.thisMapIndicator != null) __instance.thisMapIndicator.SetActive(true);
+                if (__instance.winAudio != null) __instance.winAudio.Play();
+                for (int i = 0; i < __instance.cubeList.Length; i++)
+                    __instance.cubeList[i].setThisID(0);
+                
+                Plugin.LogDebug($"[Puzzle] onWin for puzzle {__instance.thisPuzzleID} — already counted, skipping counter increment");
+                return false; // Skip original onWin (which would double-increment)
+            }
+            return true;
+        }
+        
         static void Postfix(PuzzleController __instance)
         {
             // Send puzzle completion to other players
             if (MPManager.Instance?.Steam != null && 
                 MPManager.Instance.Steam.IsRunning)
             {
+                // Don't re-send if we already know about this completion (received from remote)
+                if (MPManager.Instance.PlayerSync.IsPuzzleCompleted(__instance.thisPuzzleID))
+                    return;
+                
                 // Track that we completed this puzzle locally
                 MPManager.Instance.PlayerSync.MarkPuzzleCompleted(__instance.thisPuzzleID);
                 MPManager.Instance.PlayerSync.SendPuzzleComplete(__instance.thisPuzzleID);
@@ -2512,9 +2381,11 @@ namespace Crawlspace2MP
             if (__instance.pcontrol == null) return;
             int puzzleID = __instance.pcontrol.thisPuzzleID;
             
-            bool localBatteryHere = puzzleID == BackpackControl.batteryLocationID && BackpackControl.batteryCharge > 0f;
-            int remoteBattery = MPManager.Instance.PlayerSync.GetRemoteBatteryLocationID();
-            bool remoteBatteryHere = puzzleID == remoteBattery;
+            // Ghost players don't have a battery
+            bool localIsGhost = MPManager.Instance.PlayerSync.IsLocalGhost;
+            bool localBatteryHere = !localIsGhost && puzzleID == BackpackControl.batteryLocationID && BackpackControl.batteryCharge > 0f;
+            var remoteAtPuzzle = MPManager.Instance.PlayerSync.GetRemoteBatteryAtLocation(puzzleID);
+            bool remoteBatteryHere = remoteAtPuzzle != null && remoteAtPuzzle.Charge > 0f;
             
             if (!localBatteryHere && !remoteBatteryHere)
                 return;
@@ -2665,6 +2536,7 @@ namespace Crawlspace2MP
             var remoteState = MPManager.Instance.PlayerSync.GetRemoteBatteryAtLocation(targetZone);
             if (remoteState != null)
             {
+                Plugin.LogDebug($"[Battery] Blocked placement at zone {targetZone} — remote player has battery there (charge={remoteState.Charge:F1})");
                 return false; // Block the placement - remote player already powering this puzzle
             }
             
@@ -2819,98 +2691,101 @@ namespace Crawlspace2MP
         }
     }
     
-    // Add friend indicator to minimap
+    // Add friend indicators to minimap — one per remote player with distinct colors
     [HarmonyPatch(typeof(MinimapControl), "setMapIconPos")]
     public class MinimapFriendPatch
     {
-        private static GameObject _friendIndicator;
+        private static List<GameObject> _friendIndicators = new List<GameObject>();
         private static MinimapControl _lastMinimapControl;
         
-        // Call this to clean up on scene change
+        // Distinct colors for up to 10 players
+        private static readonly UnityEngine.Color[] PLAYER_COLORS = new UnityEngine.Color[]
+        {
+            UnityEngine.Color.cyan,
+            new UnityEngine.Color(1f, 0.5f, 0f),    // orange
+            new UnityEngine.Color(1f, 1f, 0f),       // yellow
+            new UnityEngine.Color(1f, 0.3f, 1f),     // pink
+            new UnityEngine.Color(0.5f, 1f, 0.5f),   // light green
+            new UnityEngine.Color(0.6f, 0.4f, 1f),   // purple
+            new UnityEngine.Color(1f, 1f, 1f),        // white
+            new UnityEngine.Color(0.3f, 0.7f, 1f),   // light blue
+            new UnityEngine.Color(1f, 0.7f, 0.7f),   // salmon
+        };
+        
         public static void Cleanup()
         {
-            if (_friendIndicator != null)
+            foreach (var ind in _friendIndicators)
             {
-                Object.Destroy(_friendIndicator);
-                _friendIndicator = null;
+                if (ind != null) Object.Destroy(ind);
             }
+            _friendIndicators.Clear();
             _lastMinimapControl = null;
         }
         
         static void Postfix(MinimapControl __instance)
         {
-            // Only if we're in multiplayer
             if (MPManager.Instance?.PlayerSync == null) return;
             if (MPManager.Instance?.Steam == null || !MPManager.Instance.Steam.IsRunning) return;
             
-            // Only show friend indicator when minimap is actually visible
-            // The minimap is visible when timer > 0 and minimap GameObject is active
             if (__instance.minimap == null || !__instance.minimap.activeSelf)
             {
-                if (_friendIndicator != null)
-                    _friendIndicator.SetActive(false);
+                foreach (var ind in _friendIndicators)
+                    if (ind != null) ind.SetActive(false);
                 return;
             }
             
-            // If minimap control changed (new scene), recreate indicator
             if (_lastMinimapControl != __instance)
             {
                 Cleanup();
                 _lastMinimapControl = __instance;
             }
             
-            // Get remote player positions
             var remotePositions = MPManager.Instance.PlayerSync.GetRemotePlayerPositions();
-            if (remotePositions.Count == 0)
-            {
-                if (_friendIndicator != null)
-                    _friendIndicator.SetActive(false);
-                return;
-            }
             
-            // Create friend indicator if it doesn't exist
-            if (_friendIndicator == null)
+            // Create/destroy indicators to match player count
+            while (_friendIndicators.Count < remotePositions.Count)
             {
-                // Clone the player indicator and make it a different color
-                _friendIndicator = Object.Instantiate(__instance.playerIndicator, __instance.playerIndicator.transform.parent);
-                _friendIndicator.name = "FriendIndicator";
+                int idx = _friendIndicators.Count;
+                var ind = Object.Instantiate(__instance.playerIndicator, __instance.playerIndicator.transform.parent);
+                ind.name = $"FriendIndicator_{idx}";
                 
-                // Try to change color to cyan/blue to distinguish from player (green) and enemy (red)
-                // Try SpriteRenderer first
-                var spriteRenderer = _friendIndicator.GetComponent<SpriteRenderer>();
-                if (spriteRenderer != null)
-                {
-                    spriteRenderer.color = UnityEngine.Color.cyan;
-                }
+                var color = idx < PLAYER_COLORS.Length ? PLAYER_COLORS[idx] : UnityEngine.Color.white;
                 
-                // Try regular Renderer
-                var renderer = _friendIndicator.GetComponent<Renderer>();
-                if (renderer != null && renderer.material != null)
-                {
-                    renderer.material.color = UnityEngine.Color.cyan;
-                }
-                
-                // Try to find any Image component via reflection (to avoid needing UI assembly)
-                foreach (var comp in _friendIndicator.GetComponents<Component>())
+                var sr = ind.GetComponent<SpriteRenderer>();
+                if (sr != null) sr.color = color;
+                var rend = ind.GetComponent<Renderer>();
+                if (rend != null && rend.material != null) rend.material.color = color;
+                foreach (var comp in ind.GetComponents<Component>())
                 {
                     var colorProp = comp.GetType().GetProperty("color");
                     if (colorProp != null && colorProp.PropertyType == typeof(UnityEngine.Color))
                     {
-                        colorProp.SetValue(comp, UnityEngine.Color.cyan);
+                        colorProp.SetValue(comp, color);
                         break;
                     }
                 }
                 
-                Plugin.Log.LogInfo("Created friend indicator on minimap");
+                _friendIndicators.Add(ind);
             }
-            Vector3 friendWorldPos = remotePositions[0];
-            Vector3 localPosition = new Vector3(
-                friendWorldPos.x * 15.4f + __instance.xOffest, 
-                friendWorldPos.z * 15.52f + __instance.yOffset, 
-                0f
-            );
-            _friendIndicator.transform.localPosition = localPosition;
-            _friendIndicator.SetActive(true);
+            
+            // Update positions and visibility
+            for (int i = 0; i < _friendIndicators.Count; i++)
+            {
+                if (i < remotePositions.Count)
+                {
+                    Vector3 wp = remotePositions[i];
+                    _friendIndicators[i].transform.localPosition = new Vector3(
+                        wp.x * 15.4f + __instance.xOffest,
+                        wp.z * 15.52f + __instance.yOffset,
+                        0f
+                    );
+                    _friendIndicators[i].SetActive(true);
+                }
+                else
+                {
+                    _friendIndicators[i].SetActive(false);
+                }
+            }
         }
     }
     

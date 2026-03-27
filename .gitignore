@@ -35,6 +35,9 @@ Assembly-CSharp/
 lib/*.dll
 !lib/.gitkeep
 
+# EOS SDK source files (users must download from Epic Developer Portal)
+lib/EOS/
+
 # Built asset bundles
 mpassets
 

@@ -7,6 +7,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Game install path for deployment -->
     <GamePath>D:\SteamLibrary\steamapps\common\Crawlspace 2</GamePath>
+    <!-- EOS SDK platform define -->
+    <DefineConstants>$(DefineConstants);EOS_PLATFORM_WINDOWS_64</DefineConstants>
   </PropertyGroup>
 
   <!-- Exclude folders that shouldn't be compiled -->
@@ -22,14 +24,14 @@
 
   <!-- Debug configuration -->
   <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <DefineConstants>$(DefineConstants);DEBUG;TRACE</DefineConstants>
     <Optimize>false</Optimize>
     <DebugType>full</DebugType>
   </PropertyGroup>
 
   <!-- Release configuration - minimal logging -->
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <DefineConstants>RELEASE</DefineConstants>
+    <DefineConstants>$(DefineConstants);RELEASE</DefineConstants>
     <Optimize>true</Optimize>
     <DebugType>none</DebugType>
   </PropertyGroup>

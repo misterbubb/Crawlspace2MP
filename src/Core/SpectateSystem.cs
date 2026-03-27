@@ -35,13 +35,13 @@ namespace Crawlspace2MP
         private bool _isReceiving = false;
         private bool _tvWasPlaying = false;
         
-        private SteamTransport _steam;
+        private INetworkTransport _steam;
         private PacketWriter _writer = new PacketWriter(1024 * 64); // 64KB buffer
         
         public bool IsSending => _isSending;
         public bool IsReceiving => _isReceiving;
         
-        public void Initialize(SteamTransport steam)
+        public void Initialize(INetworkTransport steam)
         {
             _steam = steam;
             

@@ -25,8 +25,28 @@ namespace Crawlspace2MP.Preloader
             {
                 // Get paths
                 string patcherDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-                // Go up from BepInEx/patchers/Crawlspace2MP/ to game root (3 levels)
-                string gameDir = Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(patcherDir)));
+                
+                // Find the actual game directory by locating the game executable
+                // This works with both manual installs and mod managers (r2modman, etc.)
+                // Mod managers use virtual profile directories, so navigating up from the
+                // patcher folder doesn't reach the real game root.
+                string gameDir = null;
+                
+                try
+                {
+                    string exePath = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+                    gameDir = Path.GetDirectoryName(exePath);
+                }
+                catch (Exception ex)
+                {
+                    Log($"Could not get game dir from process: {ex.Message}");
+                }
+                
+                // Fallback: navigate up from patcher dir (works for manual installs)
+                if (gameDir == null)
+                {
+                    gameDir = Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(patcherDir)));
+                }
                 
                 Log($"SteamAPIPatcher initializing...");
                 Log($"Patcher directory: {patcherDir}");

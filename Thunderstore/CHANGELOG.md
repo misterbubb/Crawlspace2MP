@@ -1,70 +1,56 @@
 # Changelog
 
+## \[1.1.5]
+
+### UI
+
+* Redesigned multiplayer panel with smaller buttons and better layout
+* Added Paste and Join button so friends can share lobby codes
+* Fixed laser pointer being hard to see when pointing at the UI
+* Added a message in the PreHome scene telling players to complete Night 0 first
+
+### Bug Fixes
+
+* Fixed puzzles becoming permanently stuck after a player dies while solving one
+* Fixed vent map showing all vents as off/red for the client
+* Fixed client puzzle completions not counting when the host is a ghost
+* Fixed dead player's battery not fully disappearing for the other player
+* Fixed partner sometimes being invisible after loading into a night
+* Removed a ton of debug logging
+
+### Additions
+
+* Added support for more than 2 players
+
+## \[1.1.3]
+
+* Fixed mod not working in mod managers
+
+## \[1.1.2]
+
+* New world-space VR multiplayer panel with laser pointer
+* Fixed battery placement at the exit door
+* Fixed painting kills syncing between players
+* Fixed vent map indicators on client
+* Fixed puzzles auto-completing when both players use the same puzzle
+* Fixed dead player battery blocking their partner
+* Fixed clown killing the client while they were looking at it
+* Fixed ghost players still getting chased by monsters
+
 ## \[1.1.1]
 
-* Fixed vent/puzzle progress getting wiped when the host dies and becomes a ghost
-* Fixed the client not being able to use the exit door when the host is a ghost
-* Fixed client's vent map showing all vents as red/off until a puzzle was completed
-* Fixed clown killing the client while they were looking at it (host's view was overriding client's)
-* Fixed ghost players still getting chased by Smile, Jeff, and Sparky
-* Fixed dead player's battery blocking their partner from using that vent
-* Fixed host's battery not working at the exit door when the client already placed theirs
-* Fixed painting entity killing both players when only one should die
-* All alive players must be in the main room to use the exit door
-* Disabled voice chat (too experimental — will return in a future update)
+* Fixed puzzle progress getting wiped when the host dies
+* Fixed client not being able to use the exit door when host is a ghost
+* Fixed clown ignoring client's line of sight
+* Fixed ghost players still being targeted by monsters
+* Fixed dead player battery blocking puzzle stations
+* Fixed painting killing both players at once
+* Disabled voice chat
 
 ## \[1.1.0]
 
-Some of these features are still early and may not work perfectly in every situation. If you run into issues, report them on the [Discord](https://discord.com/invite/BDZ6NjegeR).
+* Initial multiplayer release
 
-### Death & Ghosts
-- You now get a proper jumpscare when you die, even if both players die at the same time
-- When you die, you become a ghost and can spectate your partner
-- Ghosts can't interact with anything — no puzzles, batteries, or cranks
-- Ghost minimap stays open so you can watch your partner's progress
-- Fixed a bug where dying would sometimes skip the jumpscare entirely
+## \[1.0.0]
 
-### Monsters
-- Henry and Harold now move the same for both players (host controls them)
-- Sparky, Jeff, and Smile are independent — each player deals with their own
-- Paintings can now kill each player separately (no more both dying because one person looked at a painting too long)
-- Fixed Henry getting stuck in the main room
-- Fixed Harold freezing after killing someone
-- Monsters now chase the closest alive player instead of only targeting the host
-
-### Puzzles
-- Puzzle progress syncs between players
-- Both players can work on different puzzles at the same time
-- Fixed the client seeing all vents as broken on the minimap when loading in
-- Added a lock system so two players can't grab the same puzzle block at once
-
-### Battery & Charging
-- Each player has their own battery
-- You can see your partner's battery when they place it in a crank or puzzle station
-- Crank charge display is now smooth instead of stuttery
-- Fixed a bug where the host couldn't place their battery at the exit door if the client already did
-
-### Visuals & Audio
-- Remote players now have a helmet model
-- You can see your partner's hand grips and trigger pulls
-- Cyan friend indicator on the minimap
-- You can hear your partner crawling through vents
-
-### Sync
-- Paintings, clown, vent doors, flashlights, and the exit door all sync between players
-- Scene transitions sync with a fade effect
-- Night selection is controlled by the host
-
-### Networking
-- Ping display
-- Players on different mod versions get a warning
-- Host migration if the host disconnects
-- Fixed death notifications not sending when VR headset was taken off mid-game
-
-### Other
-- Streamer mode — press Insert to hide the UI
-- Fixed mod files deploying to the wrong folder on build
-
-## [1.0.0]
-
-- Initial release
+* Initial release
