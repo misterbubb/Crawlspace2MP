@@ -1170,6 +1170,19 @@ namespace Crawlspace2MP
             // Clear remote battery states
             _remoteBatteryStates.Clear();
             
+            // Reset puzzle sync state for new scene
+            _puzzleMaster = null;
+            _puzzleInitSent = false;
+            _puzzleInitStartWaited = false;
+            _puzzleInitApplied = false;
+            _puzzleInitReapplyTimer = 0f;
+            _puzzleInitCompletedStates = null;
+            _puzzleInitActiveStates = null;
+            _completedPuzzleIDs.Clear();
+            
+            // Clear interaction locks
+            ClearAllLocks();
+            
             // NOTE: Do NOT clear _pendingPuzzleInit here - it may have arrived before the scene loaded
             // and we need it to be applied once PuzzleMaster is available in the new scene
             
@@ -3812,17 +3825,14 @@ namespace Crawlspace2MP
             
             Plugin.Log.LogInfo($"[Ghost] Partner alive - becoming ghost in {currentScene}");
             _localIsGhost = true;
-            _ghostSceneToReload = currentScene;
-            _pendingGhostTeleport = true;
             
             // Clear local battery state — ghost has no battery
             BackpackControl.batteryLocationID = 0;
             BackpackControl.batteryCharge = 0f;
             BackpackControl.batteryIsInBackpack = false;
             
-            // CRITICAL: Always set the intercept flag when becoming a ghost
-            // Even if we're already a ghost (e.g., client died, then host dies)
-            // This ensures the scene intercept works for each death
+            // Set flag so GhostSceneInterceptPatch catches the death coroutine's LoadScene("Home")
+            // and re-enables the world without reloading the scene
             IsGhostSceneReload = true;
         }
         
@@ -3934,6 +3944,23 @@ namespace Crawlspace2MP
         private float _ghostTeleportDelay = 0f;
         
         /// <summary>
+        /// Teleport ghost to partner without scene reload. Called from GhostSceneInterceptPatch.
+        /// </summary>
+        public void TeleportToPartner()
+        {
+            // Use a short delay to let the world re-enable
+            _ghostTeleportDelay = 0.5f;
+            _pendingGhostTeleport = false; // Don't use the scene-reload teleport path
+            
+            // Re-send ghost state so remote players know we're a ghost
+            _writer.Reset();
+            _writer.Put(PACKET_DEATH_GHOST);
+            _writer.Put(true);
+            _writer.Put(0); // ghost respawn
+            SendToAllPeers(true);
+        }
+        
+        /// <summary>
         /// Update ghost teleport (called from main Update)
         /// </summary>
         private void UpdateGhostTeleport()
@@ -3943,31 +3970,25 @@ namespace Crawlspace2MP
             _ghostTeleportDelay -= Time.deltaTime;
             if (_ghostTeleportDelay > 0f) return;
             
-            Plugin.Log.LogInfo("[Ghost] Teleporting to partner...");
+            // Teleport to the level spawn point (main room) — this is a safe known position
+            // that won't clip through floors. The ghost can walk to the partner from there.
+            Vector3 targetPos = _levelSpawnPoint;
             
-            // Get partner's position
-            Vector3 partnerPos = Vector3.zero;
-            bool foundPartner = false;
-            
-            foreach (var kvp in _remotePlayers)
+            if (!_spawnPointCaptured)
             {
-                var remote = kvp.Value;
-                if (remote.Head != null)
+                // Fallback: try partner position
+                foreach (var kvp in _remotePlayers)
                 {
-                    partnerPos = remote.Head.transform.position;
-                    foundPartner = true;
-                    break;
+                    if (kvp.Value.Head != null)
+                    {
+                        targetPos = kvp.Value.Head.transform.position;
+                        break;
+                    }
                 }
             }
             
-            if (!foundPartner)
-            {
-                Plugin.Log.LogWarning($"[Ghost] No partner found to teleport to!");
-                return;
-            }
-            
-            // Teleport the local player to partner's position
-            TeleportLocalPlayer(partnerPos);
+            Plugin.Log.LogInfo($"[Ghost] Teleporting to {(_spawnPointCaptured ? "spawn point" : "partner")}: {targetPos}");
+            TeleportLocalPlayer(targetPos);
         }
         
         /// <summary>

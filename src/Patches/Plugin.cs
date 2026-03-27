@@ -992,7 +992,8 @@ namespace Crawlspace2MP
         {
             if (_uiHidden) return;
             
-            // HUD connection indicator (top-right corner)
+#if DEBUG
+            // HUD connection indicator (top-right corner) — debug only
             if (IsRunning && IsConnected)
             {
                 int peerCount = Steam.ConnectedPeerCount;
@@ -1022,12 +1023,11 @@ namespace Crawlspace2MP
                 if (isGhost)
                 {
                     GUI.contentColor = new UnityEngine.Color(0.7f, 0.7f, 1f);
-                    GUI.Label(new Rect(Screen.width - 155, 66, 140, 20), "👻 GHOST MODE");
+                    GUI.Label(new Rect(Screen.width - 155, 66, 140, 20), "GHOST MODE");
                     GUI.contentColor = UnityEngine.Color.white;
                 }
             }
             
-#if DEBUG
             if (DebugEntitiesDisabled)
                 DrawDebugActorUI();
 #endif
@@ -2066,6 +2066,16 @@ namespace Crawlspace2MP
         
         static void Postfix(PuzzleController __instance, bool __state)
         {
+            // Safety: set requiredCompletions to 4 as default so puzzles never auto-complete
+            // loadPreset will override this with the correct value when the puzzle loads
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var rcField = typeof(PuzzleController).GetField("requiredCompletions", flags);
+            if (rcField != null)
+            {
+                int rc = (int)rcField.GetValue(__instance);
+                if (rc <= 0) rcField.SetValue(__instance, 4);
+            }
+            
             if (!__state) return; // Was false or not in multiplayer — nothing to restore
             
             // Restore puzzleHasCompleted that Start() just wiped
@@ -2103,14 +2113,32 @@ namespace Crawlspace2MP
     [HarmonyPatch(typeof(PuzzleController), "loadPreset")]
     public class PuzzleLoadPresetPatch
     {
-        static void Prefix(PuzzleController __instance)
+        static void Prefix(PuzzleController __instance, int presetID)
         {
             var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            int oldTC = (int)typeof(PuzzleController).GetField("totalCompletions", flags).GetValue(__instance);
+            int oldRC = (int)typeof(PuzzleController).GetField("requiredCompletions", flags).GetValue(__instance);
+            Plugin.Log.LogInfo($"[Puzzle] loadPreset: puzzle={__instance.thisPuzzleID}, presetID={presetID}, oldTC={oldTC}, oldRC={oldRC} -> resetting TC=0");
+            
             var tcField = typeof(PuzzleController).GetField("totalCompletions", flags);
             if (tcField != null) tcField.SetValue(__instance, 0);
-            // Also reset originCubeID so the player starts fresh
             var ocField = typeof(PuzzleController).GetField("originCubeID", flags);
             if (ocField != null) ocField.SetValue(__instance, -1);
+        }
+        
+        static void Postfix(PuzzleController __instance, int presetID)
+        {
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var rcField = typeof(PuzzleController).GetField("requiredCompletions", flags);
+            if (rcField != null)
+            {
+                int rc = (int)rcField.GetValue(__instance);
+                if (rc <= 0)
+                {
+                    rcField.SetValue(__instance, 4);
+                    Plugin.Log.LogInfo($"[Puzzle] loadPreset Postfix: requiredCompletions was {rc} for preset {presetID}, forced to 4");
+                }
+            }
         }
     }
     
@@ -2204,6 +2232,23 @@ namespace Crawlspace2MP
             
             // Neither battery here - let original run (it will reset/turn off)
             return true;
+        }
+    }
+    
+    // Log puzzle completion state for diagnostics
+    [HarmonyPatch(typeof(PuzzleController), "onComplete")]
+    public class PuzzleOnCompletePatch
+    {
+        static void Prefix(PuzzleController __instance)
+        {
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            int tc = (int)typeof(PuzzleController).GetField("totalCompletions", flags).GetValue(__instance);
+            int rc = (int)typeof(PuzzleController).GetField("requiredCompletions", flags).GetValue(__instance);
+            int presetID = (int)typeof(PuzzleController).GetField("puzzlePresetID", flags).GetValue(__instance);
+            bool completed = (bool)typeof(PuzzleController).GetField("puzzleHasCompleted", flags).GetValue(__instance);
+            Plugin.Log.LogInfo($"[Puzzle] onComplete: puzzle={__instance.thisPuzzleID}, totalCompletions={tc}+1, requiredCompletions={rc}, presetID={presetID}, alreadyCompleted={completed}");
+            if (tc + 1 >= rc)
+                Plugin.Log.LogInfo($"[Puzzle] >>> WILL TRIGGER onWin! tc={tc}+1 >= rc={rc}");
         }
     }
     
@@ -2873,25 +2918,44 @@ namespace Crawlspace2MP
     {
         static bool Prefix(ref string sceneName)
         {
-            // Only intercept if we're in multiplayer and ghost reload is pending
             if (!PlayerSync.IsGhostSceneReload) return true;
             
             var playerSync = MPManager.Instance?.PlayerSync;
             if (playerSync == null) return true;
             
-            // Check if this is trying to load Home after death
             if (sceneName.Equals("Home", System.StringComparison.OrdinalIgnoreCase))
             {
-                Plugin.Log.LogInfo("[Ghost] Intercepting Home load - reloading Night scene as ghost");
-                
-                // Clear the flag and let PlayerSync handle the reload
+                Plugin.Log.LogInfo("[Ghost] Intercepting Home load - staying in scene as ghost (no reload)");
                 PlayerSync.IsGhostSceneReload = false;
-                playerSync.ReloadSceneAsGhost();
                 
-                return false; // Don't load Home
+                // Re-enable world without reloading — find jumpscareController and fix everything
+                var jsc = Object.FindObjectOfType<jumpscareController>();
+                if (jsc != null)
+                {
+                    if (jsc.worldMaster != null) jsc.worldMaster.SetActive(true);
+                    if (jsc.leftHand != null) jsc.leftHand.SetActive(true);
+                    if (jsc.rightHand != null) jsc.rightHand.SetActive(true);
+                    if (jsc.bkgGO != null) jsc.bkgGO.SetActive(false);
+                    if (jsc.staticScreen != null) jsc.staticScreen.SetActive(false);
+                    if (jsc.sparkyGO != null) jsc.sparkyGO.SetActive(false);
+                    if (jsc.haroldGO != null) jsc.haroldGO.SetActive(false);
+                    if (jsc.smileyGO != null) jsc.smileyGO.SetActive(false);
+                    if (jsc.jeffGO != null) jsc.jeffGO.SetActive(false);
+                    if (jsc.henryGO != null) jsc.henryGO.SetActive(false);
+                    if (jsc.clownJSDoll != null) jsc.clownJSDoll.SetActive(false);
+                    
+                    var deathIDField = typeof(jumpscareController).GetField("deathID", 
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    deathIDField?.SetValue(jsc, 0);
+                }
+                
+                // Teleport to partner
+                playerSync.TeleportToPartner();
+                
+                return false; // Don't load Home — stay in the Night scene
             }
             
-            return true; // Allow other scene loads
+            return true;
         }
     }
     
