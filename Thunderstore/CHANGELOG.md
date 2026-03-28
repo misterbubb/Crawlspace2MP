@@ -1,5 +1,15 @@
 # Changelog
 
+## \[1.2.1]
+
+* fixed ghost falling out of the map.
+
+## \[1.2]
+
+* Puzzle Fixes
+* Minimap Fixes
+* Ghost Fixes
+
 ## \[1.1.5]
 
 ### UI

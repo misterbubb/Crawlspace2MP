@@ -480,6 +480,17 @@ namespace Crawlspace2MP
                 _uiHidden = !_uiHidden;
             }
             
+            // G key — flag next death to become ghost instead of going Home (testing)
+            if (Plugin.VerboseLogging && keyboard != null && keyboard.gKey.wasPressedThisFrame)
+            {
+                string scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+                if (scene.Contains("Night") && PlayerSync != null && !PlayerSync.IsLocalGhost)
+                {
+                    PlayerSync.DebugForceGhostOnDeath = !PlayerSync.DebugForceGhostOnDeath;
+                    Plugin.Log.LogInfo($"[Debug] Ghost on next death: {PlayerSync.DebugForceGhostOnDeath}");
+                }
+            }
+            
             // ===== Trailer staging hotkeys =====
 #if DEBUG
             if (keyboard != null)
@@ -1142,7 +1153,7 @@ namespace Crawlspace2MP
     {
         public const string PLUGIN_GUID = "com.crawlspace2.multiplayer";
         public const string PLUGIN_NAME = "Crawlspace2MP";
-        public const string PLUGIN_VERSION = "1.1.5";
+        public const string PLUGIN_VERSION = "1.2.1";
     }
     
     // Harmony patches to block client from controlling game flow
@@ -2918,6 +2929,8 @@ namespace Crawlspace2MP
     {
         static bool Prefix(ref string sceneName)
         {
+            Plugin.Log.LogInfo($"[Ghost] LoadScene interceptor: sceneName={sceneName}, IsGhostSceneReload={PlayerSync.IsGhostSceneReload}");
+            
             if (!PlayerSync.IsGhostSceneReload) return true;
             
             var playerSync = MPManager.Instance?.PlayerSync;
@@ -2928,13 +2941,15 @@ namespace Crawlspace2MP
                 Plugin.Log.LogInfo("[Ghost] Intercepting Home load - staying in scene as ghost (no reload)");
                 PlayerSync.IsGhostSceneReload = false;
                 
-                // Re-enable world without reloading — find jumpscareController and fix everything
                 var jsc = Object.FindObjectOfType<jumpscareController>();
                 if (jsc != null)
                 {
+                    // Re-enable world and hands
                     if (jsc.worldMaster != null) jsc.worldMaster.SetActive(true);
                     if (jsc.leftHand != null) jsc.leftHand.SetActive(true);
                     if (jsc.rightHand != null) jsc.rightHand.SetActive(true);
+                    
+                    // Hide all jumpscare visuals
                     if (jsc.bkgGO != null) jsc.bkgGO.SetActive(false);
                     if (jsc.staticScreen != null) jsc.staticScreen.SetActive(false);
                     if (jsc.sparkyGO != null) jsc.sparkyGO.SetActive(false);
@@ -2944,15 +2959,26 @@ namespace Crawlspace2MP
                     if (jsc.henryGO != null) jsc.henryGO.SetActive(false);
                     if (jsc.clownJSDoll != null) jsc.clownJSDoll.SetActive(false);
                     
+                    // Stop all jumpscare audio (normally stopped by scene unload)
+                    if (jsc.JSSparky != null) jsc.JSSparky.Stop();
+                    if (jsc.JSHarold != null) jsc.JSHarold.Stop();
+                    if (jsc.JSHenry != null) jsc.JSHenry.Stop();
+                    if (jsc.JSJeff != null) jsc.JSJeff.Stop();
+                    if (jsc.JSSmile != null) jsc.JSSmile.Stop();
+                    
+                    // Reset deathID to stop FixedUpdate animations
                     var deathIDField = typeof(jumpscareController).GetField("deathID", 
                         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                     deathIDField?.SetValue(jsc, 0);
+                    
+                    Plugin.Log.LogInfo("[Ghost] World re-enabled, jumpscare cleaned up");
                 }
                 
-                // Teleport to partner
+                // Teleport with a delay — give physics/colliders time to re-activate
+                // after worldMaster is re-enabled
                 playerSync.TeleportToPartner();
                 
-                return false; // Don't load Home — stay in the Night scene
+                return false;
             }
             
             return true;

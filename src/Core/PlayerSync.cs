@@ -1299,6 +1299,16 @@ namespace Crawlspace2MP
             // Update ghost teleport if pending
             UpdateGhostTeleport();
             
+            // Ghost fall-through-map recovery (only after the delayed teleport has fired)
+            if (_localIsGhost && _spawnPointCaptured && _mainCamera != null && _ghostTeleportDelay <= 0f)
+            {
+                if (_mainCamera.transform.position.y < -5f)
+                {
+                    Plugin.Log.LogInfo($"[Ghost] Fell through map (Y={_mainCamera.transform.position.y:F1}), re-teleporting to spawn");
+                    TeleportLocalPlayer(_levelSpawnPoint);
+                }
+            }
+            
             // Process pending ghost puzzle state restore (after PuzzleMaster.Start() has run)
             if (_pendingGhostPuzzleRestore)
             {
@@ -1323,7 +1333,7 @@ namespace Crawlspace2MP
             if (!_steam.IsHost && !_steam.IsConnected && !_steam.IsInLobby) return;
             
             // Capture spawn point early in the level (before player moves much)
-            if (!_spawnPointCaptured && _updateCount > 10) // Wait a few frames for scene to settle
+            if (!_spawnPointCaptured && _updateCount > 10)
             {
                 CaptureSpawnPoint();
             }
@@ -3746,32 +3756,32 @@ namespace Crawlspace2MP
         {
             if (_spawnPointCaptured) return;
             
-            // Try to find player position from various sources
-            var backpack = Object.FindObjectOfType<BackpackControl>();
-            if (backpack != null && backpack.cam != null)
+            // Only capture after the player has stood up (debugSwitch = true in MoveTypeController)
+            // onEnterRoom lifts the player after 3.25s — we need to wait for that
+            var mtc = Object.FindObjectOfType<MoveTypeController>();
+            if (mtc != null && mtc.debugSwitch && mtc.playerObj != null)
             {
-                _levelSpawnPoint = backpack.cam.transform.position;
-                _levelSpawnRotation = backpack.cam.transform.rotation;
+                _levelSpawnPoint = mtc.playerObj.transform.position;
                 _spawnPointCaptured = true;
-                Plugin.LogDebug($"[Ghost] Captured spawn point: {_levelSpawnPoint}");
-            }
-            else if (_mainCamera != null)
-            {
-                _levelSpawnPoint = _mainCamera.transform.position;
-                _levelSpawnRotation = _mainCamera.transform.rotation;
-                _spawnPointCaptured = true;
+                Plugin.Log.LogInfo($"[Ghost] Captured spawn point from playerObj (standing): {_levelSpawnPoint}");
             }
         }
         
         // Send death notification to other players (for UI display)
         public void SendDeathGhost(bool isGhost, int deathType)
         {
-            if (_steam == null || !_steam.IsRunning) return;
+            Plugin.Log.LogInfo($"[Death] SendDeathGhost called: isGhost={isGhost}, deathType={deathType}, steamRunning={_steam?.IsRunning}, localIsGhost={_localIsGhost}, debugForce={DebugForceGhostOnDeath}");
+            
+            if (_steam == null || !_steam.IsRunning)
+            {
+                Plugin.Log.LogInfo("[Death] Steam not running, skipping send");
+                return;
+            }
             
             // Prevent sending multiple death notifications
             if (isGhost && _localIsGhost) 
             {
-                Plugin.Log.LogInfo($"[Death] Already a ghost, skipping duplicate death notification (deathType={deathType})");
+                Plugin.Log.LogInfo($"[Death] Already a ghost, skipping duplicate death notification");
                 return;
             }
             
@@ -3780,17 +3790,17 @@ namespace Crawlspace2MP
             _writer.Put(isGhost);
             _writer.Put(deathType);
             SendToAllPeers(true);
-            Plugin.Log.LogInfo($"Sent death notification: deathType={deathType}");
+            Plugin.Log.LogInfo($"[Death] Sent death notification: deathType={deathType}");
             
             // Mark ourselves as ghost and trigger scene reload
             if (isGhost)
             {
-                // Flag that we're in the middle of dying - prevents ghost block patches
-                // from cancelling the jumpscare coroutine that's about to start
                 IsDyingThisFrame = true;
                 BecomeGhost();
             }
         }
+        
+        public bool DebugForceGhostOnDeath = false;
         
         /// <summary>
         /// Called when local player dies - becomes a ghost and reloads the scene
@@ -3799,22 +3809,29 @@ namespace Crawlspace2MP
         {
             string currentScene = SceneManager.GetActiveScene().name;
             
-            Plugin.Log.LogInfo($"[Ghost] BecomeGhost called - Scene={currentScene}, AlreadyGhost={_localIsGhost}");
+            Plugin.Log.LogInfo($"[Ghost] BecomeGhost: scene={currentScene}, alreadyGhost={_localIsGhost}, debugForce={DebugForceGhostOnDeath}, remotePlayers={_remotePlayers.Count}");
             
-            // Only become ghost in Night levels
             if (!currentScene.Contains("Night"))
-                return;
-            
-            // Check if partner is still alive
-            bool partnerAlive = false;
-            foreach (var kvp in _remotePlayers)
             {
-                if (!kvp.Value.IsGhost)
+                Plugin.Log.LogInfo("[Ghost] Not in Night scene, aborting");
+                return;
+            }
+            
+            // Check if partner is still alive (skip check if debug flag is set)
+            bool partnerAlive = DebugForceGhostOnDeath;
+            if (!partnerAlive)
+            {
+                foreach (var kvp in _remotePlayers)
                 {
-                    partnerAlive = true;
-                    break;
+                    if (!kvp.Value.IsGhost)
+                    {
+                        partnerAlive = true;
+                        break;
+                    }
                 }
             }
+            
+            Plugin.Log.LogInfo($"[Ghost] partnerAlive={partnerAlive}");
             
             if (!partnerAlive)
             {
@@ -3825,6 +3842,7 @@ namespace Crawlspace2MP
             
             Plugin.Log.LogInfo($"[Ghost] Partner alive - becoming ghost in {currentScene}");
             _localIsGhost = true;
+            DebugForceGhostOnDeath = false; // Clear debug flag after use
             
             // Clear local battery state — ghost has no battery
             BackpackControl.batteryLocationID = 0;
@@ -3948,9 +3966,9 @@ namespace Crawlspace2MP
         /// </summary>
         public void TeleportToPartner()
         {
-            // Use a short delay to let the world re-enable
-            _ghostTeleportDelay = 0.5f;
-            _pendingGhostTeleport = false; // Don't use the scene-reload teleport path
+            Plugin.Log.LogInfo($"[Ghost] TeleportToPartner called, setting delay=1.5s, spawnCaptured={_spawnPointCaptured}, spawnPoint={_levelSpawnPoint}");
+            _ghostTeleportDelay = 1.5f;
+            _pendingGhostTeleport = false;
             
             // Re-send ghost state so remote players know we're a ghost
             _writer.Reset();
@@ -3970,8 +3988,7 @@ namespace Crawlspace2MP
             _ghostTeleportDelay -= Time.deltaTime;
             if (_ghostTeleportDelay > 0f) return;
             
-            // Teleport to the level spawn point (main room) — this is a safe known position
-            // that won't clip through floors. The ghost can walk to the partner from there.
+            // Teleport to spawn point at floor level (Y=0) — VR tracking adds head height
             Vector3 targetPos = _levelSpawnPoint;
             
             if (!_spawnPointCaptured)
@@ -3987,7 +4004,11 @@ namespace Crawlspace2MP
                 }
             }
             
-            Plugin.Log.LogInfo($"[Ghost] Teleporting to {(_spawnPointCaptured ? "spawn point" : "partner")}: {targetPos}");
+            // Force Y to 0 (floor level) — the spawn point Y includes standing offset
+            // which causes clipping when combined with VR head tracking
+            targetPos.y = 0f;
+            
+            Plugin.Log.LogInfo($"[Ghost] Teleporting to {(_spawnPointCaptured ? "spawn" : "partner")} at floor level: {targetPos}");
             TeleportLocalPlayer(targetPos);
         }
         
@@ -3996,109 +4017,64 @@ namespace Crawlspace2MP
         /// </summary>
         private void TeleportLocalPlayer(Vector3 position)
         {
-            // GorillaLocomotion Player uses transform.position for the rig
-            // and headCollider.transform.position for the head
-            // We need to move the whole rig so the head ends up at the target position
+            var mtc = Object.FindObjectOfType<MoveTypeController>();
             
-            if (_gorillaPlayer != null)
+            // Force standing mode
+            if (mtc != null)
             {
-                // Calculate offset between rig position and head position
-                Vector3 headPos = Vector3.zero;
+                mtc.debugSwitch = true;
+                if (mtc.ccol != null) mtc.ccol.height = mtc.standingHeight;
+                if (mtc.cmpb != null) mtc.cmpb.moveSpeed = mtc.standingSpeed;
+                if (_gorillaPlayer != null) _gorillaPlayer.maxArmLength = 0f;
+            }
+            
+            // Find GorillaPlayer fresh — the cached _gorillaPlayer may be null
+            var gorillaPlayer = _gorillaPlayer ?? GorillaLocomotion.Player.Instance;
+            if (gorillaPlayer == null)
+                gorillaPlayer = Object.FindObjectOfType<GorillaLocomotion.Player>();
+            
+            if (gorillaPlayer != null)
+            {
+                // Get and reset the rigidbody
+                var rbField = typeof(GorillaLocomotion.Player).GetField("playerRigidBody", 
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                var rb = rbField?.GetValue(gorillaPlayer) as Rigidbody;
                 
-                // Get head position via reflection (headCollider is public)
-                var headColliderField = typeof(Player).GetField("headCollider", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                if (headColliderField != null)
+                if (rb != null)
                 {
-                    var headCollider = headColliderField.GetValue(_gorillaPlayer) as SphereCollider;
-                    if (headCollider != null)
-                    {
-                        headPos = headCollider.transform.position;
-                    }
+                    rb.velocity = Vector3.zero;
+                    rb.angularVelocity = Vector3.zero;
+                    rb.position = position;
+                    rb.transform.position = position;
                 }
                 
-                // If we got head position, calculate the offset
-                Vector3 rigPos = _gorillaPlayer.transform.position;
-                Vector3 headToRigOffset = rigPos - headPos;
+                gorillaPlayer.transform.position = position;
                 
-                // Move rig so head ends up at target position
-                Vector3 newRigPos = position + headToRigOffset;
-                _gorillaPlayer.transform.position = newRigPos;
+                // Also reset last positions so locomotion doesn't calculate huge deltas
+                var lastLeftField = typeof(GorillaLocomotion.Player).GetField("lastLeftHandPosition", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                var lastRightField = typeof(GorillaLocomotion.Player).GetField("lastRightHandPosition", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                var lastHeadField = typeof(GorillaLocomotion.Player).GetField("lastHeadPosition", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                 
-                // Also reset velocity to prevent weird physics
-                var rigidBodyField = typeof(Player).GetField("playerRigidBody", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (rigidBodyField != null)
-                {
-                    var rb = rigidBodyField.GetValue(_gorillaPlayer) as Rigidbody;
-                    if (rb != null)
-                    {
-                        rb.velocity = Vector3.zero;
-                    }
-                }
+                if (lastLeftField != null && gorillaPlayer.leftHandTransform != null)
+                    lastLeftField.SetValue(gorillaPlayer, gorillaPlayer.leftHandTransform.position);
+                if (lastRightField != null && gorillaPlayer.rightHandTransform != null)
+                    lastRightField.SetValue(gorillaPlayer, gorillaPlayer.rightHandTransform.position);
                 
-                // Reset hand positions to prevent teleport-induced movement
-                var lastLeftField = typeof(Player).GetField("lastLeftHandPosition", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                var lastRightField = typeof(Player).GetField("lastRightHandPosition", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                var lastHeadField = typeof(Player).GetField("lastHeadPosition", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                
-                if (lastLeftField != null && _gorillaPlayer.leftHandTransform != null)
-                    lastLeftField.SetValue(_gorillaPlayer, _gorillaPlayer.leftHandTransform.position);
-                if (lastRightField != null && _gorillaPlayer.rightHandTransform != null)
-                    lastRightField.SetValue(_gorillaPlayer, _gorillaPlayer.rightHandTransform.position);
+                var headColliderField = typeof(GorillaLocomotion.Player).GetField("headCollider", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
                 if (lastHeadField != null && headColliderField != null)
                 {
-                    var headCollider = headColliderField.GetValue(_gorillaPlayer) as SphereCollider;
-                    if (headCollider != null)
-                        lastHeadField.SetValue(_gorillaPlayer, headCollider.transform.position);
+                    var hc = headColliderField.GetValue(gorillaPlayer) as SphereCollider;
+                    if (hc != null) lastHeadField.SetValue(gorillaPlayer, hc.transform.position);
                 }
                 
-                Plugin.Log.LogInfo($"[Ghost] Teleported player to partner");
+                // Update cache
+                _gorillaPlayer = gorillaPlayer;
+                
+                Plugin.Log.LogInfo($"[Ghost] Teleported GorillaPlayer to {position}, rb.position={rb?.position}");
                 return;
             }
             
-            // Fallback: Try SimpleCapsuleWithStickMovement (alternative VR movement)
-            var capsuleMovement = Object.FindObjectOfType<SimpleCapsuleWithStickMovement>();
-            if (capsuleMovement != null)
-            {
-                // Get the camera rig's center eye position
-                var cameraRigField = typeof(SimpleCapsuleWithStickMovement).GetField("CameraRig", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                if (cameraRigField != null)
-                {
-                    var cameraRig = cameraRigField.GetValue(capsuleMovement);
-                    if (cameraRig != null)
-                    {
-                        // Get centerEyeAnchor position
-                        var centerEyeProp = cameraRig.GetType().GetProperty("centerEyeAnchor");
-                        if (centerEyeProp != null)
-                        {
-                            var centerEye = centerEyeProp.GetValue(cameraRig) as Transform;
-                            if (centerEye != null)
-                            {
-                                Vector3 headPos = centerEye.position;
-                                Vector3 rigPos = capsuleMovement.transform.position;
-                                Vector3 offset = rigPos - headPos;
-                                capsuleMovement.transform.position = position + offset;
-                                
-                                // Reset rigidbody velocity
-                                var rb = capsuleMovement.GetComponent<Rigidbody>();
-                                if (rb != null) rb.velocity = Vector3.zero;
-                                
-                                Plugin.Log.LogInfo($"[Ghost] Teleported SimpleCapsule");
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Last fallback: move camera parent directly
-            if (_mainCamera != null)
-            {
-                var cameraParent = _mainCamera.transform.parent;
-                if (cameraParent != null)
-                {
-                    cameraParent.position = position;
-                }
-            }
+            Plugin.Log.LogWarning("[Ghost] GorillaPlayer not found even via FindObjectOfType!");
         }
         
         /// <summary>
