@@ -200,7 +200,7 @@ namespace Crawlspace2MP
         
         public PlayerSync PlayerSync { get; private set; }
         public SteamTransport Steam { get; private set; }
-        public VoiceChat VoiceChat { get; private set; } // Disabled - experimental, will be replaced
+        public VoiceChat VoiceChat { get; private set; }
         public SpectateSystem Spectate { get; private set; }
         public MultiplayerUI WorldUI { get; private set; }
         
@@ -253,9 +253,8 @@ namespace Crawlspace2MP
             PlayerSync = new PlayerSync();
             PlayerSync.Initialize(Steam);
             
-            // Voice chat disabled for now - experimental and buggy
-            // VoiceChat = new VoiceChat();
-            // VoiceChat.Initialize(Steam);
+            VoiceChat = new VoiceChat();
+            VoiceChat.Initialize(Steam);
             
             // Create spectate system
             Spectate = new SpectateSystem();
@@ -568,7 +567,7 @@ namespace Crawlspace2MP
             // Poll Steam events
             Steam?.Update();
             PlayerSync?.Update();
-            // VoiceChat?.Update(); // Disabled
+            VoiceChat?.Update();
             Spectate?.Update();
             
             // Actor recorder — capture frames and update playback
@@ -1127,7 +1126,7 @@ namespace Crawlspace2MP
             try
             {
                 Spectate?.Cleanup();
-                // VoiceChat?.Cleanup(); // Disabled
+                VoiceChat?.Cleanup();
                 PlayerSync?.Cleanup();
                 Steam?.Shutdown();
                 _statusMessage = "Disconnected";
@@ -1143,7 +1142,7 @@ namespace Crawlspace2MP
         private void OnDestroy()
         {
             Spectate?.Cleanup();
-            // VoiceChat?.Cleanup(); // Disabled
+            VoiceChat?.Cleanup();
             PlayerSync?.Cleanup();
             Steam?.Shutdown();
         }
@@ -1153,7 +1152,7 @@ namespace Crawlspace2MP
     {
         public const string PLUGIN_GUID = "com.crawlspace2.multiplayer";
         public const string PLUGIN_NAME = "Crawlspace2MP";
-        public const string PLUGIN_VERSION = "1.2.1";
+        public const string PLUGIN_VERSION = "1.2.5";
     }
     
     // Harmony patches to block client from controlling game flow
@@ -1654,12 +1653,42 @@ namespace Crawlspace2MP
     {
         static bool Prefix(henryBrain __instance)
         {
-            // Only controller runs Henry AI - client receives position sync
-            if (MPManager.Instance?.Steam != null && MPManager.Instance.Steam.IsRunning)
+            if (MPManager.Instance?.Steam == null || !MPManager.Instance.Steam.IsRunning) return true;
+            if (!MPManager.Instance.PlayerSync.ShouldControlMonsters) return false;
+            
+            // If we're a ghost, redirect Henry to the nearest alive player
+            if (MPManager.Instance.PlayerSync.IsLocalGhost)
             {
-                if (!MPManager.Instance.PlayerSync.ShouldControlMonsters)
-                    return false; // Block on non-controller
+                var positions = MPManager.Instance.PlayerSync.GetRemotePlayerPositionsNonGhost();
+                if (positions.Count > 0)
+                {
+                    // Find closest alive player
+                    Vector3 closest = positions[0];
+                    float closestDist = Vector3.Distance(__instance.transform.position, closest);
+                    for (int i = 1; i < positions.Count; i++)
+                    {
+                        float d = Vector3.Distance(__instance.transform.position, positions[i]);
+                        if (d < closestDist) { closestDist = d; closest = positions[i]; }
+                    }
+                    
+                    var resetField = typeof(henryBrain).GetField("resetSwitch", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    bool resetSwitch = resetField != null ? (bool)resetField.GetValue(__instance) : false;
+                    
+                    if (resetSwitch)
+                    {
+                        // In reset mode — move to random position at high speed
+                        __instance.agent.speed = __instance.henrySpeed * 15f;
+                        if (Vector3.Distance(__instance.transform.position, __instance.agent.destination) < 0.5f && closestDist > 5f)
+                            resetField?.SetValue(__instance, false);
+                    }
+                    else
+                    {
+                        __instance.agent.SetDestination(closest);
+                    }
+                }
+                return false; // Skip original — we handled it
             }
+            
             return true;
         }
     }
@@ -1781,24 +1810,69 @@ namespace Crawlspace2MP
     {
         static bool Prefix(henryBrain __instance)
         {
-            // Ghosts can't die again
-            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
+            if (MPManager.Instance?.Steam == null || !MPManager.Instance.Steam.IsRunning) return true;
+            var ps = MPManager.Instance.PlayerSync;
+            if (ps == null) return true;
+            
+            // Non-controller: block everything
+            if (!ps.ShouldControlMonsters) return false;
+            
+            // Ghost host: run AI logic but target alive players, skip local kill
+            if (ps.IsLocalGhost)
             {
-                return false;
+                var positions = ps.GetRemotePlayerPositionsNonGhost();
+                if (positions.Count == 0) return false; // No alive players
+                
+                // Find closest alive player
+                Vector3 closest = positions[0];
+                float closestDist = Vector3.Distance(__instance.transform.position, closest);
+                for (int i = 1; i < positions.Count; i++)
+                {
+                    float d = Vector3.Distance(__instance.transform.position, positions[i]);
+                    if (d < closestDist) { closestDist = d; closest = positions[i]; }
+                }
+                
+                var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                var resetField = typeof(henryBrain).GetField("resetSwitch", flags);
+                bool resetSwitch = resetField != null ? (bool)resetField.GetValue(__instance) : false;
+                
+                // Update playerdist for the AI state machine
+                var distField = typeof(henryBrain).GetField("playerdist", flags);
+                distField?.SetValue(__instance, closestDist);
+                
+                // Kill check — send targeted kill to the closest alive player (not local ghost)
+                if (closestDist < 0.5f && !resetSwitch)
+                {
+                    // Don't kill locally — CheckSyncedMonsterKills handles remote kills
+                }
+                else if (closestDist < 0.5f && resetSwitch)
+                {
+                    __instance.setRandomPos();
+                }
+                
+                // Chase/reset logic
+                if (closestDist < 2.5f)
+                {
+                    __instance.agent.speed = __instance.henrySpeed * 1.4f;
+                    var chaseField = typeof(henryBrain).GetField("chaseSwitch", flags);
+                    chaseField?.SetValue(__instance, true);
+                }
+                else
+                {
+                    __instance.agent.speed = __instance.henrySpeed;
+                    var chaseField = typeof(henryBrain).GetField("chaseSwitch", flags);
+                    bool chaseSwitch = chaseField != null ? (bool)chaseField.GetValue(__instance) : false;
+                    if (chaseSwitch)
+                    {
+                        __instance.setRandomPos();
+                        chaseField?.SetValue(__instance, false);
+                    }
+                }
+                
+                return false; // Skip original
             }
             
-            // Client: block ALL AI logic for Henry (position is synced from host)
-            // Kill checks are handled by the HOST via targeted kill packets
-            // This prevents double-kills when both players are near Henry
-            if (MPManager.Instance?.Steam != null && MPManager.Instance.Steam.IsRunning &&
-                MPManager.Instance.PlayerSync != null)
-            {
-                if (!MPManager.Instance.PlayerSync.ShouldControlMonsters)
-                {
-                    return false; // Block everything - host handles kills via targeted packet
-                }
-            }
-            return true;
+            return true; // Normal host — run original
         }
     }
     
@@ -1808,35 +1882,47 @@ namespace Crawlspace2MP
     {
         static bool Prefix(mapEnBrain __instance)
         {
-            // Ghosts can't die again
-            if (MPManager.Instance?.PlayerSync != null && MPManager.Instance.PlayerSync.IsLocalGhost)
+            if (MPManager.Instance?.Steam == null || !MPManager.Instance.Steam.IsRunning) return true;
+            var ps = MPManager.Instance.PlayerSync;
+            if (ps == null) return true;
+            
+            // Ghosts: skip local kill check but still do minimap for alive players
+            if (ps.IsLocalGhost)
             {
+                // Harold still wanders (wanderMode runs separately)
+                // Just skip the kill check — CheckSyncedMonsterKills handles remote kills
+                // Do minimap for alive players
+                var positions = ps.GetRemotePlayerPositionsNonGhost();
+                if (positions.Count > 0)
+                {
+                    float closestDist = float.MaxValue;
+                    foreach (var pos in positions)
+                    {
+                        float d = Vector3.Distance(pos, __instance.transform.position);
+                        if (d < closestDist) closestDist = d;
+                    }
+                    if (closestDist < __instance.minimapViewDist)
+                        __instance.mmc.setMapIconPosEnemy();
+                }
                 return false;
             }
             
-            // Client: block ALL AI for Harold (position is synced from host)
-            // Kill checks are handled by the HOST via targeted kill packets
-            // Keep minimap/haptics since those are local visual feedback
-            if (MPManager.Instance?.Steam != null && MPManager.Instance.Steam.IsRunning &&
-                MPManager.Instance.PlayerSync != null)
+            // Non-controller: block AI, keep minimap/haptics
+            if (!ps.ShouldControlMonsters)
             {
-                if (!MPManager.Instance.PlayerSync.ShouldControlMonsters)
+                if (__instance.player != null)
                 {
-                    // Still do minimap + haptics (local visual feedback only)
-                    if (__instance.player != null)
+                    float dist = Vector3.Distance(__instance.player.transform.position, __instance.transform.position);
+                    if (dist < __instance.minimapViewDist)
                     {
-                        float dist = Vector3.Distance(__instance.player.transform.position, __instance.transform.position);
-                        if (dist < __instance.minimapViewDist)
+                        __instance.mmc.setMapIconPosEnemy();
+                        if (dist < __instance.minimapViewDist / 2f)
                         {
-                            __instance.mmc.setMapIconPosEnemy();
-                            if (dist < __instance.minimapViewDist / 2f)
-                            {
-                                __instance.hapticTriggerFunc();
-                            }
+                            __instance.hapticTriggerFunc();
                         }
                     }
-                    return false; // Block AI + kill check - host handles kills
                 }
+                return false;
             }
             return true;
         }

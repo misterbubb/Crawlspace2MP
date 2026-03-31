@@ -28,6 +28,8 @@ namespace Crawlspace2MP
         private Button _showCodeButton;
         private Button _copyCodeButton;
         private Button _pasteJoinButton;
+        private Button _voiceToggleButton;
+        private Text _micInfoText;
         private GameObject _notConnectedPanel;
         private GameObject _connectedPanel;
         private GameObject _joiningPanel;
@@ -54,10 +56,12 @@ namespace Crawlspace2MP
         private bool _initialized = false;
         private Font _cachedFont;
         private Dictionary<ulong, float> _inviteSentTime = new Dictionary<ulong, float>();
+        private string _lastStatusMsg = "";
+        private float _statusSetTime = 0f;
 
         // World-space canvas
-        private const float CANVAS_W = 520f;
-        private const float CANVAS_H = 700f;
+        private const float CANVAS_W = 550f;
+        private const float CANVAS_H = 800f;
         private const float WORLD_SCALE = 0.00092f;
 
         // Palette
@@ -158,15 +162,15 @@ namespace Crawlspace2MP
             var hr = hdr.GetComponent<RectTransform>();
             hr.anchorMin = new Vector2(0, 1); hr.anchorMax = new Vector2(1, 1);
             hr.pivot = new Vector2(0.5f, 1);
-            hr.sizeDelta = new Vector2(0, 56); hr.anchoredPosition = Vector2.zero;
+            hr.sizeDelta = new Vector2(0, 48); hr.anchoredPosition = Vector2.zero;
 
-            _playerNameText = MkText("Name", hr, "", 13, TextAnchor.MiddleCenter);
+            _playerNameText = MkText("Name", hr, "", 12, TextAnchor.MiddleCenter);
             _playerNameText.color = new Color(0.65f, 0.8f, 1f);
             var nr = _playerNameText.GetComponent<RectTransform>();
-            nr.anchorMin = new Vector2(0, 0.6f); nr.anchorMax = new Vector2(1, 1);
+            nr.anchorMin = new Vector2(0, 0.65f); nr.anchorMax = new Vector2(1, 1);
             nr.offsetMin = nr.offsetMax = Vector2.zero;
 
-            var title = MkText("Title", hr, "Crawlspace 2 MP", 22, TextAnchor.MiddleCenter);
+            var title = MkText("Title", hr, "Crawlspace 2 MP", 20, TextAnchor.MiddleCenter);
             title.color = C_TEXT; title.fontStyle = FontStyle.Bold;
             var tr = title.GetComponent<RectTransform>();
             tr.anchorMin = new Vector2(0, 0); tr.anchorMax = new Vector2(1, 0.62f);
@@ -176,25 +180,27 @@ namespace Crawlspace2MP
             var body = MkObj("Body", crt);
             var br = body.GetComponent<RectTransform>();
             br.anchorMin = Vector2.zero; br.anchorMax = Vector2.one;
-            br.offsetMin = new Vector2(12, 18);
-            br.offsetMax = new Vector2(-12, -58);
+            br.offsetMin = new Vector2(10, 16);
+            br.offsetMax = new Vector2(-10, -50);
 
             var vl = body.AddComponent<VerticalLayoutGroup>();
-            vl.spacing = 4; vl.padding = new RectOffset(0, 0, 2, 2);
+            vl.spacing = 2; vl.padding = new RectOffset(0, 0, 0, 0);
             vl.childAlignment = TextAnchor.UpperCenter;
             vl.childControlWidth = true; vl.childControlHeight = false;
             vl.childForceExpandWidth = true; vl.childForceExpandHeight = false;
 
-            // Status line
-            _statusText = AddLabel(br, "Status", 16, TextAnchor.MiddleCenter, 22);
+            // Status line (compact)
+            _statusText = AddLabel(br, "", 12, TextAnchor.MiddleCenter, 16);
             _statusText.color = C_TEXT;
 
-            // Tutorial hint
-            _tutorialHint = AddLabel(br, "", 13, TextAnchor.MiddleCenter, 34);
+            // Tutorial hint (hidden by default, only shown in Intro scenes)
+            _tutorialHint = AddLabel(br, "", 12, TextAnchor.MiddleCenter, 0);
             _tutorialHint.color = C_WARN;
+            _tutorialHint.gameObject.SetActive(false);
 
-            // Connected players line
-            _connectedPlayersText = AddLabel(br, "", 13, TextAnchor.MiddleCenter, 18);
+            // Connected players (hidden — merged into status)
+            _connectedPlayersText = AddLabel(br, "", 1, TextAnchor.MiddleCenter, 0);
+            _connectedPlayersText.gameObject.SetActive(false);
             _connectedPlayersText.color = C_OK;
 
             // --- NOT CONNECTED panel ---
@@ -206,19 +212,23 @@ namespace Crawlspace2MP
             var hostHL = hostRow.AddComponent<HorizontalLayoutGroup>();
             hostHL.spacing = 6; hostHL.childControlWidth = true; hostHL.childControlHeight = true;
             hostHL.childForceExpandWidth = true; hostHL.childForceExpandHeight = false;
-            hostRow.AddComponent<LayoutElement>().preferredHeight = 34;
+            hostRow.AddComponent<LayoutElement>().preferredHeight = 28;
 
             _hostButton = MkBtn(hostRow.GetComponent<RectTransform>(),
-                "Host Game", C_HOST, 34, () => _manager.HostGame());
+                "Host Game", C_HOST, 28, () =>
+                {
+                    if (_manager.IsRunning || _manager.IsJoining)
+                        _manager.DisconnectFromLobby();
+                    _manager.HostGame();
+                });
 
             _pasteJoinButton = MkBtn(hostRow.GetComponent<RectTransform>(),
-                "Paste & Join", C_BTN, 34, () =>
+                "Paste & Join", C_BTN, 28, () =>
                 {
-                    // Don't join if already in a lobby
+                    // If already connected, disconnect first
                     if (_manager.IsRunning || _manager.IsJoining)
                     {
-                        _manager.StatusMessage = "Disconnect first";
-                        return;
+                        _manager.DisconnectFromLobby();
                     }
                     string clip = GUIUtility.systemCopyBuffer;
                     if (!string.IsNullOrEmpty(clip))
@@ -226,7 +236,6 @@ namespace Crawlspace2MP
                         clip = clip.Trim();
                         if (ulong.TryParse(clip, out ulong lobbyId) && lobbyId > 0)
                         {
-                            // Prevent joining your own lobby (current or recently left)
                             string currentLobby = _manager.Steam?.GetLobbyId() ?? "";
                             string lastLobby = _manager.LastLobbyId ?? "";
                             string idStr = lobbyId.ToString();
@@ -247,7 +256,7 @@ namespace Crawlspace2MP
 
             AddLine(ncrt);
 
-            _friendsHeaderText = AddLabel(ncrt, "Friends Playing", 13, TextAnchor.MiddleLeft, 18);
+            _friendsHeaderText = AddLabel(ncrt, "Friends Playing", 11, TextAnchor.MiddleLeft, 14);
             _friendsHeaderText.color = C_DIM;
 
             BuildScrollList(ncrt, out _friendsPanel, out _friendsScroll, out _friendsScrollContent, 0);
@@ -257,16 +266,37 @@ namespace Crawlspace2MP
             _connectedPanel = MkPanel(br, "Connected");
             var crt2 = _connectedPanel.GetComponent<RectTransform>();
 
+            // Voice + Disconnect row
+            var actionRow = MkObj("ActionRow", crt2);
+            var actionHL = actionRow.AddComponent<HorizontalLayoutGroup>();
+            actionHL.spacing = 4; actionHL.childControlWidth = true; actionHL.childControlHeight = true;
+            actionHL.childForceExpandWidth = true; actionHL.childForceExpandHeight = false;
+            actionRow.AddComponent<LayoutElement>().preferredHeight = 24;
+
+            _voiceToggleButton = MkBtn(actionRow.GetComponent<RectTransform>(),
+                "Mic: ON", C_BTN, 24, () =>
+                {
+                    if (_manager.VoiceChat != null)
+                    {
+                        _manager.VoiceChat.Enabled = !_manager.VoiceChat.Enabled;
+                    }
+                });
+
+            _disconnectButton = MkBtn(actionRow.GetComponent<RectTransform>(),
+                "Disconnect", C_DC, 24, () => _manager.DisconnectFromLobby());
+
+            // Mic input info (tiny, one line)
+            _micInfoText = AddLabel(crt2, "", 9, TextAnchor.MiddleLeft, 12);
+            _micInfoText.color = C_DIM;
+
             BuildCodeRow(crt2);
             AddLine(crt2);
 
-            _inviteHeaderText = AddLabel(crt2, "Invite Friends", 13, TextAnchor.MiddleLeft, 18);
+            _inviteHeaderText = AddLabel(crt2, "Invite Friends", 11, TextAnchor.MiddleLeft, 14);
             _inviteHeaderText.color = C_DIM;
 
             BuildScrollList(crt2, out _inviteFriendsPanel, out _inviteFriendsScroll, out _inviteFriendsContent, 0);
             _inviteFriendsPanel.GetComponent<LayoutElement>().flexibleHeight = 1;
-
-            _disconnectButton = MkBtn(crt2, "Disconnect", C_DC, 30, () => _manager.DisconnectFromLobby());
 
             // --- JOINING panel ---
             _joiningPanel = MkPanel(br, "Joining");
@@ -281,31 +311,28 @@ namespace Crawlspace2MP
             var fr = ftr.GetComponent<RectTransform>();
             fr.anchorMin = Vector2.zero; fr.anchorMax = new Vector2(1, 0);
             fr.pivot = new Vector2(0.5f, 0);
-            fr.sizeDelta = new Vector2(0, 16); fr.anchoredPosition = new Vector2(0, 1);
+            fr.sizeDelta = new Vector2(0, 14); fr.anchoredPosition = new Vector2(0, 1);
             var ft = ftr.AddComponent<Text>();
-            ft.font = GetFont(); ft.fontSize = 11;
+            ft.font = GetFont(); ft.fontSize = 10;
             ft.alignment = TextAnchor.MiddleCenter;
             ft.color = new Color(0.35f, 0.35f, 0.4f, 0.7f);
-            ft.text = $"v{PluginInfo.PLUGIN_VERSION}";
+            ft.text = $"v{PluginInfo.PLUGIN_VERSION} | Steam Voice";
         }
 
         private void BuildCodeRow(RectTransform parent)
         {
             _lobbyCodePanel = MkObj("CodePanel", parent);
-            var vl = _lobbyCodePanel.AddComponent<VerticalLayoutGroup>();
-            vl.spacing = 2; vl.childControlWidth = true; vl.childControlHeight = false;
-            vl.childForceExpandWidth = true; vl.childForceExpandHeight = false;
-
-            var row = MkObj("Row", _lobbyCodePanel.GetComponent<RectTransform>());
-            var hl = row.AddComponent<HorizontalLayoutGroup>();
+            var hl = _lobbyCodePanel.AddComponent<HorizontalLayoutGroup>();
             hl.spacing = 4; hl.childControlWidth = true; hl.childControlHeight = true;
-            hl.childForceExpandWidth = true; hl.childForceExpandHeight = false;
-            row.AddComponent<LayoutElement>().preferredHeight = 26;
+            hl.childForceExpandWidth = false; hl.childForceExpandHeight = false;
+            _lobbyCodePanel.AddComponent<LayoutElement>().preferredHeight = 18;
 
-            _showCodeButton = MkBtn(row.GetComponent<RectTransform>(),
-                "Show Code", C_BTN, 26, () => _showLobbyCode = !_showLobbyCode);
-            _copyCodeButton = MkBtn(row.GetComponent<RectTransform>(),
-                "Copy", C_BTN, 26, () =>
+            _showCodeButton = MkBtn(_lobbyCodePanel.GetComponent<RectTransform>(),
+                "Show Code", C_BTN, 18, () => _showLobbyCode = !_showLobbyCode);
+            _showCodeButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 80;
+
+            _copyCodeButton = MkBtn(_lobbyCodePanel.GetComponent<RectTransform>(),
+                "Copy", C_BTN, 18, () =>
                 {
                     string code = _manager.Steam?.GetLobbyId() ?? "";
                     if (!string.IsNullOrEmpty(code))
@@ -314,12 +341,14 @@ namespace Crawlspace2MP
                         _copiedTime = Time.realtimeSinceStartup;
                     }
                 });
+            _copyCodeButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 45;
 
             var cObj = MkObj("CodeText", _lobbyCodePanel.GetComponent<RectTransform>());
-            cObj.AddComponent<LayoutElement>().preferredHeight = 16;
+            var cLE = cObj.AddComponent<LayoutElement>();
+            cLE.flexibleWidth = 1; cLE.preferredHeight = 18;
             _lobbyCodeText = cObj.AddComponent<Text>();
-            _lobbyCodeText.font = GetFont(); _lobbyCodeText.fontSize = 11;
-            _lobbyCodeText.alignment = TextAnchor.MiddleCenter;
+            _lobbyCodeText.font = GetFont(); _lobbyCodeText.fontSize = 9;
+            _lobbyCodeText.alignment = TextAnchor.MiddleLeft;
             _lobbyCodeText.color = new Color(0.9f, 0.9f, 0.55f);
         }
 
@@ -331,9 +360,8 @@ namespace Crawlspace2MP
             if (height > 0) le.preferredHeight = height;
             le.flexibleHeight = 0;
 
-            var maskImg = panel.AddComponent<Image>();
-            maskImg.color = new Color(0, 0, 0, 0.01f);
-            panel.AddComponent<Mask>().showMaskGraphic = false;
+            // RectMask2D clips children without needing a visible Image
+            panel.AddComponent<RectMask2D>();
 
             scroll = panel.AddComponent<ScrollRect>();
             scroll.horizontal = false; scroll.vertical = true;
@@ -589,7 +617,37 @@ namespace Crawlspace2MP
             if (_statusText != null)
             {
                 string s = _manager.StatusMessage;
-                _statusText.text = s;
+                
+                // Track when status changes for auto-clear
+                if (s != _lastStatusMsg)
+                {
+                    _lastStatusMsg = s;
+                    _statusSetTime = Time.realtimeSinceStartup;
+                }
+                
+                // Auto-clear status after 5 seconds
+                if (!string.IsNullOrEmpty(s) && Time.realtimeSinceStartup - _statusSetTime > 5f)
+                {
+                    _manager.StatusMessage = "";
+                    s = "";
+                }
+                
+                if (connected && !string.IsNullOrEmpty(s))
+                {
+                    // When connected, show player count inline with status
+                    int total = (_manager.Steam?.ConnectedPeerCount ?? 0) + 1;
+                    _statusText.text = $"{s}  [{total}P]";
+                }
+                else if (connected)
+                {
+                    int total = (_manager.Steam?.ConnectedPeerCount ?? 0) + 1;
+                    _statusText.text = $"Connected [{total}P]";
+                }
+                else
+                {
+                    _statusText.text = s;
+                }
+                
                 _statusText.color = s.Contains("joined") || s.Contains("created") ? C_OK
                     : s.Contains("failed") || s.Contains("left") || s.Contains("Disconnected") ? C_ERR
                     : s.Contains("Joining") || s.Contains("Creating") ? C_WARN : C_TEXT;
@@ -609,20 +667,7 @@ namespace Crawlspace2MP
             }
 
             if (_connectedPlayersText != null)
-            {
-                if (connected)
-                {
-                    var names = _manager.Steam?.GetConnectedPlayerNames();
-                    if (names != null && names.Count > 0)
-                    {
-                        int total = (_manager.Steam?.ConnectedPeerCount ?? 0) + 1;
-                        _connectedPlayersText.text = $"Playing with: {string.Join(", ", names)} ({total}P)";
-                        _connectedPlayersText.gameObject.SetActive(true);
-                    }
-                    else _connectedPlayersText.gameObject.SetActive(false);
-                }
-                else _connectedPlayersText.gameObject.SetActive(false);
-            }
+                _connectedPlayersText.gameObject.SetActive(false); // Merged into status line
 
             bool showNC = !running && !joining;
             bool showC = running && !joining;
@@ -647,7 +692,23 @@ namespace Crawlspace2MP
                     _lobbyCodeText.gameObject.SetActive(false);
 
                 if (_showCodeButton != null)
-                    SetLabel(_showCodeButton, _showLobbyCode ? "Hide Code" : "Show Code");
+                    SetLabel(_showCodeButton, _showLobbyCode ? "Hide" : "Show Code");
+                
+                if (_voiceToggleButton != null)
+                {
+                    bool voiceOn = _manager.VoiceChat?.Enabled ?? false;
+                    SetLabel(_voiceToggleButton, voiceOn ? "Mic: ON" : "Mic: OFF");
+                }
+                
+                if (_micInfoText != null)
+                {
+                    string micName = "Default";
+                    var devices = Microphone.devices;
+                    if (devices != null && devices.Length > 0)
+                        micName = devices[0];
+                    if (micName.Length > 30) micName = micName.Substring(0, 27) + "...";
+                    _micInfoText.text = $"Input: {micName}";
+                }
             }
         }
 
@@ -673,9 +734,9 @@ namespace Crawlspace2MP
                 if (playing.Count == 0)
                 {
                     var empty = MkObj("Empty", _friendsScrollContent.GetComponent<RectTransform>());
-                    empty.AddComponent<LayoutElement>().preferredHeight = 32;
+                    empty.AddComponent<LayoutElement>().preferredHeight = 20;
                     var t = empty.AddComponent<Text>();
-                    t.font = GetFont(); t.fontSize = 13;
+                    t.font = GetFont(); t.fontSize = 11;
                     t.alignment = TextAnchor.MiddleCenter; t.color = C_DIM;
                     t.text = "No friends playing Crawlspace 2";
                     _friendEntries.Add(empty);
@@ -700,9 +761,9 @@ namespace Crawlspace2MP
                 if (online.Count == 0)
                 {
                     var empty = MkObj("Empty", _inviteFriendsContent.GetComponent<RectTransform>());
-                    empty.AddComponent<LayoutElement>().preferredHeight = 32;
+                    empty.AddComponent<LayoutElement>().preferredHeight = 20;
                     var t = empty.AddComponent<Text>();
-                    t.font = GetFont(); t.fontSize = 13;
+                    t.font = GetFont(); t.fontSize = 11;
                     t.alignment = TextAnchor.MiddleCenter; t.color = C_DIM;
                     t.text = "No friends online";
                     _inviteEntries.Add(empty);
@@ -720,7 +781,7 @@ namespace Crawlspace2MP
             bool inviteMode, RectTransform parent)
         {
             var entry = MkObj($"F_{friend.Name}", parent);
-            entry.AddComponent<LayoutElement>().preferredHeight = 30;
+            entry.AddComponent<LayoutElement>().preferredHeight = 24;
             entry.AddComponent<Image>().color = alt ? C_ROW_ALT : C_ROW;
 
             var row = entry.AddComponent<HorizontalLayoutGroup>();
@@ -846,7 +907,7 @@ namespace Crawlspace2MP
             var tObj = MkObj("L", o.GetComponent<RectTransform>());
             Fill(tObj);
             var t = tObj.AddComponent<Text>();
-            t.font = GetFont(); t.fontSize = 15;
+            t.font = GetFont(); t.fontSize = 14;
             t.alignment = TextAnchor.MiddleCenter; t.color = C_TEXT; t.text = label;
 
             btn.onClick.AddListener(click);
@@ -883,3 +944,4 @@ namespace Crawlspace2MP
         }
     }
 }
+

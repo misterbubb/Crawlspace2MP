@@ -1,5 +1,18 @@
 # Changelog
 
+## \[1.2.5]
+
+* more voice chat stuff
+* race condition fixes
+* code cleanup
+* stuff
+
+## \[1.2.2]
+
+* fixed a ton of ghost issues
+* sync fixes
+* a ton of other stuff that i cant remember
+
 ## \[1.2.1]
 
 * fixed ghost falling out of the map.

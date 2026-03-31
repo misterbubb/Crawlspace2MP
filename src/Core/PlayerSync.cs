@@ -446,7 +446,7 @@ namespace Crawlspace2MP
                     HandlePuzzleBlock(reader);
                     break;
                 case PACKET_CLOWN_HONK:
-                    HandleClownHonkPacket();
+                    HandleClownHonk(reader);
                     break;
                 case PACKET_VENT_SOUND:
                     HandleVentSoundPacket(reader);
@@ -500,7 +500,7 @@ namespace Crawlspace2MP
                     HandleTargetedKill(reader);
                     break;
                 case VoiceChat.PACKET_VOICE:
-                    // Voice chat disabled
+                    MPManager.Instance?.VoiceChat?.OnVoiceDataReceived(peerId, reader);
                     break;
                 case SpectateSystem.PACKET_SPECTATE_FRAME:
                 case SpectateSystem.PACKET_SPECTATE_START:
@@ -825,41 +825,7 @@ namespace Crawlspace2MP
             _isReceivingJeffFlash = false;
         }
         
-        private void HandleBatterySyncPacket(int peerId, PacketReader reader)
-        {
-            int locationId = reader.GetInt();
-            bool inBackpack = reader.GetBool();
-            float charge = reader.GetFloat();
-            
-            if (!_remoteBatteryStates.ContainsKey(peerId))
-            {
-                _remoteBatteryStates[peerId] = new RemoteBatteryState();
-            }
-            _remoteBatteryStates[peerId].LocationID = locationId;
-            _remoteBatteryStates[peerId].InBackpack = inBackpack;
-            _remoteBatteryStates[peerId].Charge = charge;
-        }
-        
-        // (Old handler removed — HandlePuzzleComplete is the active handler)
-        
-        private void HandlePuzzleBlockPacket(PacketReader reader)
-        {
-            int blockNumber = reader.GetInt();
-            int blockIdValue = reader.GetInt();
-            // Apply puzzle block state
-        }
-        
-        private void HandleClownHonkPacket()
-        {
-            // Find clown nose and play honk sound
-            var clownNoseObj = Object.FindObjectOfType<clownNose>();
-            if (clownNoseObj != null && clownNoseObj.honkSound != null)
-            {
-                _isReceivingHonk = true;
-                clownNoseObj.honkSound.Play();
-                _isReceivingHonk = false;
-            }
-        }
+        // Dead code removed — active handlers are HandleBatterySync, HandlePuzzleBlock, HandleClownHonk
         
         private void HandleVentSoundPacket(PacketReader reader)
         {
@@ -1300,9 +1266,10 @@ namespace Crawlspace2MP
             UpdateGhostTeleport();
             
             // Ghost fall-through-map recovery (only after the delayed teleport has fired)
-            if (_localIsGhost && _spawnPointCaptured && _mainCamera != null && _ghostTeleportDelay <= 0f)
+            if (_localIsGhost && _spawnPointCaptured && _ghostTeleportDelay <= 0f)
             {
-                if (_mainCamera.transform.position.y < -5f)
+                var cam = _mainCamera ?? Camera.main;
+                if (cam != null && cam.transform.position.y < -5f)
                 {
                     Plugin.Log.LogInfo($"[Ghost] Fell through map (Y={_mainCamera.transform.position.y:F1}), re-teleporting to spawn");
                     TeleportLocalPlayer(_levelSpawnPoint);
@@ -1930,36 +1897,6 @@ namespace Crawlspace2MP
             _writer.Put(interactionId);
             _writer.Put(locked);
             SendToAllPeers(true);
-        }
-        
-        private void HandleSceneChange(PacketReader reader)
-        {
-            string sceneName = reader.GetString();
-            Plugin.Log.LogInfo($"[Client] Received scene change: {sceneName}");
-            
-            // Only clients should load - host already loaded
-            if (!_steam.IsHost)
-            {
-                string currentScene = SceneManager.GetActiveScene().name;
-                
-                if (currentScene != sceneName)
-                {
-                    Plugin.Log.LogInfo($"[Client] Loading scene: {sceneName}");
-                    IsLoadingFromSync = true;
-                    _lastScene = sceneName;
-                    
-                    // Start fade effect immediately
-                    TriggerClientFade();
-                    
-                    // Set delay timer and pending scene
-                    _sceneLoadDelayTimer = SCENE_LOAD_DELAY;
-                    _pendingSceneLoad = sceneName;
-                }
-                else
-                {
-                    Plugin.LogDebug($"[Client] Already in scene {sceneName}, ignoring");
-                }
-            }
         }
         
         // Try to trigger the game's fade effect for smoother transitions
@@ -3966,9 +3903,12 @@ namespace Crawlspace2MP
         /// </summary>
         public void TeleportToPartner()
         {
-            Plugin.Log.LogInfo($"[Ghost] TeleportToPartner called, setting delay=1.5s, spawnCaptured={_spawnPointCaptured}, spawnPoint={_levelSpawnPoint}");
-            _ghostTeleportDelay = 1.5f;
+            Plugin.Log.LogInfo($"[Ghost] TeleportToPartner called, setting delay=2.5s, spawnCaptured={_spawnPointCaptured}, spawnPoint={_levelSpawnPoint}");
+            _ghostTeleportDelay = 2.5f;
             _pendingGhostTeleport = false;
+            
+            // Create ghost vision light so the ghost can see
+            CreateGhostVision();
             
             // Re-send ghost state so remote players know we're a ghost
             _writer.Reset();
@@ -3988,7 +3928,29 @@ namespace Crawlspace2MP
             _ghostTeleportDelay -= Time.deltaTime;
             if (_ghostTeleportDelay > 0f) return;
             
-            // Teleport to spawn point at floor level (Y=0) — VR tracking adds head height
+            // Check if the player was standing (in the main room) — no teleport needed
+            var mtc = Object.FindObjectOfType<MoveTypeController>();
+            if (mtc != null && mtc.debugSwitch)
+            {
+                // Player was standing — they're already in a valid position (main room)
+                // Just make sure they stay in standing mode
+                Plugin.Log.LogInfo("[Ghost] Player was standing when died — no teleport needed");
+                return;
+            }
+            
+            // Player was crawling (in vents) — teleport to spawn point in main room
+            // Force standing mode first
+            if (mtc != null)
+            {
+                mtc.debugSwitch = true;
+                if (mtc.ccol != null) mtc.ccol.height = mtc.standingHeight;
+                if (mtc.cmpb != null) mtc.cmpb.moveSpeed = mtc.standingSpeed;
+            }
+            
+            var gorillaPlayer = _gorillaPlayer ?? GorillaLocomotion.Player.Instance 
+                ?? Object.FindObjectOfType<GorillaLocomotion.Player>();
+            if (gorillaPlayer != null) gorillaPlayer.maxArmLength = 0f;
+            
             Vector3 targetPos = _levelSpawnPoint;
             
             if (!_spawnPointCaptured)
@@ -4017,17 +3979,6 @@ namespace Crawlspace2MP
         /// </summary>
         private void TeleportLocalPlayer(Vector3 position)
         {
-            var mtc = Object.FindObjectOfType<MoveTypeController>();
-            
-            // Force standing mode
-            if (mtc != null)
-            {
-                mtc.debugSwitch = true;
-                if (mtc.ccol != null) mtc.ccol.height = mtc.standingHeight;
-                if (mtc.cmpb != null) mtc.cmpb.moveSpeed = mtc.standingSpeed;
-                if (_gorillaPlayer != null) _gorillaPlayer.maxArmLength = 0f;
-            }
-            
             // Find GorillaPlayer fresh — the cached _gorillaPlayer may be null
             var gorillaPlayer = _gorillaPlayer ?? GorillaLocomotion.Player.Instance;
             if (gorillaPlayer == null)

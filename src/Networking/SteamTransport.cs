@@ -384,12 +384,8 @@ namespace Crawlspace2MP
                     CurrentLobby.SetData("game", "Crawlspace2MP");
                     CurrentLobby.SetData("version", PluginInfo.PLUGIN_VERSION);
                     
-                    // Use Public instead of FriendsOnly so anyone with the code can join
                     CurrentLobby.SetPublic();
                     CurrentLobby.SetJoinable(true);
-                    
-                    // Set game server to enable "Join Game" on friend's profile
-                    // Using lobby owner's SteamId as the "server"
                     CurrentLobby.SetGameServer(SteamClient.SteamId);
                     
                     Plugin.Log.LogInfo($"Lobby created! ID: {CurrentLobby.Id}");
@@ -397,9 +393,17 @@ namespace Crawlspace2MP
                     OnLobbyCreated?.Invoke(CurrentLobby);
                     _onLobbyCreatedString?.Invoke(CurrentLobby.Id.Value.ToString());
                 }
+                else
+                {
+                    IsRunning = false;
+                    IsHost = false;
+                    Plugin.Log.LogWarning("Lobby creation returned null");
+                }
             }
             catch (Exception ex)
             {
+                IsRunning = false;
+                IsHost = false;
                 Plugin.Log.LogError($"Failed to create lobby: {ex}");
             }
         }
