@@ -133,7 +133,6 @@ namespace Crawlspace2MP
                 SteamNetworking.OnP2PSessionRequest += HandleP2PSessionRequest;
                 
                 _initialized = true;
-                Plugin.Log.LogInfo($"Steam transport initialized! User: {SteamClient.Name} ({SteamClient.SteamId})");
                 
                 // Check for command line join arguments (when launched via Steam "Join Game")
                 CheckCommandLineJoin();
@@ -307,7 +306,6 @@ namespace Crawlspace2MP
             writer.Put(TRANSPORT_VERSION_CHECK);
             writer.Put(PluginInfo.PLUGIN_VERSION);
             SendToSteamId(target, writer.GetBytes(), true);
-            Plugin.Log.LogInfo($"Sent version check ({PluginInfo.PLUGIN_VERSION}) to {target}");
         }
         
         private void HandleVersionCheck(SteamId from, string remoteVersion)
@@ -318,7 +316,6 @@ namespace Crawlspace2MP
                 return; // Already verified this peer
             }
             
-            Plugin.Log.LogInfo($"Received version {remoteVersion} from {from}");
             _versionVerifiedPeers.Add(from);
             
             if (remoteVersion != PluginInfo.PLUGIN_VERSION)
@@ -354,7 +351,6 @@ namespace Crawlspace2MP
             
             IsLobbyLocked = true;
             CurrentLobby.SetJoinable(false);
-            Plugin.Log.LogInfo("Lobby locked - no new joins allowed");
         }
         
         /// <summary>
@@ -366,7 +362,6 @@ namespace Crawlspace2MP
             
             IsLobbyLocked = false;
             CurrentLobby.SetJoinable(true);
-            Plugin.Log.LogInfo("Lobby unlocked - joins allowed");
         }
         
         #region Lobby Management
@@ -375,7 +370,6 @@ namespace Crawlspace2MP
         {
             try
             {
-                Plugin.Log.LogInfo($"Creating Steam lobby for {maxPlayers} players...");
                 var lobby = await SteamMatchmaking.CreateLobbyAsync(maxPlayers);
                 
                 if (lobby.HasValue)
@@ -388,7 +382,6 @@ namespace Crawlspace2MP
                     CurrentLobby.SetJoinable(true);
                     CurrentLobby.SetGameServer(SteamClient.SteamId);
                     
-                    Plugin.Log.LogInfo($"Lobby created! ID: {CurrentLobby.Id}");
                     UpdateRichPresence();
                     OnLobbyCreated?.Invoke(CurrentLobby);
                     _onLobbyCreatedString?.Invoke(CurrentLobby.Id.Value.ToString());
@@ -605,7 +598,6 @@ namespace Crawlspace2MP
                     // Auto-accept P2P from lobby members
                     if (!_connectedPeers.Contains(steamId) && IsLobbyMember(steamId))
                     {
-                        Plugin.Log.LogInfo($"Auto-accepting peer {steamId} on first packet");
                         AcceptPeer(steamId);
                     }
                     
@@ -656,13 +648,11 @@ namespace Crawlspace2MP
         {
             if (newHostId == SteamClient.SteamId)
             {
-                Plugin.Log.LogInfo("Host migration: We are now the host!");
                 IsHost = true;
                 OnBecameHost?.Invoke();
             }
             else
             {
-                Plugin.Log.LogInfo($"Host migration: New host is {newHostId}");
             }
         }
         
@@ -686,8 +676,6 @@ namespace Crawlspace2MP
             int peerId = _nextPeerId++;
             _steamIdToPeerId[steamId] = peerId;
             _peerIdToSteamId[peerId] = steamId;
-            
-            Plugin.Log.LogInfo($"Accepted P2P from {steamId} as peer {peerId}, total peers: {_connectedPeers.Count}");
             
             // Reset send fail counter on new connection
             _sendFailCount = 0;
@@ -724,12 +712,9 @@ namespace Crawlspace2MP
         /// </summary>
         private void HandleP2PSessionRequest(SteamId steamId)
         {
-            Plugin.Log.LogInfo($"P2P session request from: {steamId}");
-            
             // Only accept from lobby members for security
             if (IsLobbyMember(steamId))
             {
-                Plugin.Log.LogInfo($"Accepting P2P session from lobby member: {steamId}");
                 SteamNetworking.AcceptP2PSessionWithUser(steamId);
                 
                 // Also add them as a peer if not already connected
@@ -740,13 +725,11 @@ namespace Crawlspace2MP
             }
             else
             {
-                Plugin.Log.LogWarning($"Rejecting P2P session from non-lobby member: {steamId}");
             }
         }
         
         private void HandleLobbyCreated(Result result, Lobby lobby)
         {
-            Plugin.Log.LogInfo($"Lobby created callback: {result}");
         }
         
         private void HandleLobbyEntered(Lobby lobby)

@@ -100,7 +100,6 @@ namespace Crawlspace2MP
             RefreshUI();
             RefreshFriendsList();
             _initialized = true;
-            Plugin.Log.LogInfo("[MPUI] VR panel ready");
         }
 
         public void Hide()

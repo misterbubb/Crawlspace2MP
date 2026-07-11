@@ -1,5 +1,10 @@
 # Changelog
 
+## \[1.2.6]
+
+* disabled pausing when in a multiplayer session
+* reduced logging
+
 ## \[1.2.5]
 
 * more voice chat stuff
@@ -77,3 +82,4 @@
 ## \[1.0.0]
 
 * Initial release
+

@@ -280,15 +280,12 @@ namespace Crawlspace2MP
             {
                 _steamInitialized = true;
                 _statusMessage = $"Welcome, {SteamClient.Name}!";
-                Plugin.Log.LogInfo($"Steam initialized as {SteamClient.Name}");
             }
             else
             {
                 _statusMessage = "Steam init failed! Is Steam running?";
                 Plugin.Log.LogError("Failed to initialize Steam");
             }
-            
-            Plugin.Log.LogInfo("MPManager initialized (Steam-only)");
         }
         
         private void OnSteamLobbyCreated(Steamworks.Data.Lobby lobby)
@@ -299,8 +296,6 @@ namespace Crawlspace2MP
             // Auto-copy lobby ID to clipboard
             GUIUtility.systemCopyBuffer = lobbyId;
             _copiedTime = Time.realtimeSinceStartup;
-            
-            Plugin.Log.LogInfo($"Lobby created: {lobbyId} (copied to clipboard)");
         }
         
         private void OnSteamLobbyJoined(Steamworks.Data.Lobby lobby)
@@ -312,14 +307,12 @@ namespace Crawlspace2MP
         private void OnJoinFailed(string reason)
         {
             _statusMessage = reason;
-            Plugin.Log.LogWarning($"Join failed: {reason}");
         }
         
         private void OnPlayerJoined(Friend friend)
         {
             _connectedPlayerName = friend.Name;
             _statusMessage = $"{friend.Name} joined!";
-            Plugin.Log.LogInfo($"Player joined: {friend.Name}");
         }
         
         private void OnPlayerLeft(Friend friend)
@@ -330,12 +323,10 @@ namespace Crawlspace2MP
                 _connectedPlayerName = "";
                 _statusMessage = IsHost ? "Waiting for players..." : "Disconnected";
             }
-            Plugin.Log.LogInfo($"Player left: {friend.Name}");
         }
         
         private void OnPeerConnected(int peerId)
         {
-            Plugin.Log.LogInfo($"Peer connected: {peerId}");
         }
         
         private void OnPeerDisconnected(int peerId)
@@ -345,7 +336,6 @@ namespace Crawlspace2MP
                 _connectedPlayerName = "";
                 _statusMessage = IsHost ? "Waiting for players..." : "Partner disconnected";
             }
-            Plugin.Log.LogInfo($"Peer disconnected: {peerId}");
         }
         
         private void OnVersionMismatch(string message)
@@ -357,7 +347,6 @@ namespace Crawlspace2MP
         private void OnBecameHost()
         {
             _statusMessage = "You are now the host!";
-            Plugin.Log.LogInfo("Host migration complete - we are now host");
         }
         
         private void OnSceneLoadedForLobby(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
@@ -1152,7 +1141,7 @@ namespace Crawlspace2MP
     {
         public const string PLUGIN_GUID = "com.crawlspace2.multiplayer";
         public const string PLUGIN_NAME = "Crawlspace2MP";
-        public const string PLUGIN_VERSION = "1.2.5";
+        public const string PLUGIN_VERSION = "1.2.6";
     }
     
     // Harmony patches to block client from controlling game flow
@@ -3321,6 +3310,46 @@ namespace Crawlspace2MP
                 __instance.handmesh.material = __instance.handmatTrans;
             
             return false; // Skip original
+        }
+    }
+    
+    // ==================== PAUSE FIX ====================
+    // Disable the automatic pause when VR headset loses focus or is taken off
+    // This is essential for multiplayer so the game doesn't pause when one player
+    // takes off their headset - the other player should still be able to play
+    
+    /// <summary>
+    /// Disable pausetest2 Update method when in multiplayer
+    /// The game pauses when OVRManager loses input/VR focus, which is bad for multiplayer
+    /// </summary>
+    [HarmonyPatch(typeof(pausetest2), "Update")]
+    public class DisablePauseSystemPatch
+    {
+        static bool Prefix(pausetest2 __instance)
+        {
+            var steam = MPManager.Instance?.Steam;
+            
+            // Disable pause when in a multiplayer session (in a lobby, whether alone or with others)
+            // IsInLobby checks if CurrentLobby.Id.Value != 0
+            if (steam != null && steam.IsInLobby)
+            {
+                // Ensure game is always unpaused during multiplayer
+                Time.timeScale = 1f;
+                AudioListener.pause = false;
+                
+                // Update internal state to prevent issues when exiting multiplayer
+                var bPauseField = typeof(pausetest2).GetField("bPause", 
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (bPauseField != null)
+                {
+                    bPauseField.SetValue(__instance, false);
+                }
+                
+                return false; // Skip pause detection - game stays active
+            }
+            
+            // Solo play - allow normal pause behavior
+            return true;
         }
     }
 }

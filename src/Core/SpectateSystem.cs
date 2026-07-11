@@ -53,8 +53,6 @@ namespace Crawlspace2MP
             
             // Create receive texture (will be resized on first frame)
             _receiveTex = new Texture2D(2, 2, TextureFormat.RGB24, false);
-            
-            Plugin.Log.LogInfo($"SpectateSystem initialized ({CAPTURE_WIDTH}x{CAPTURE_HEIGHT} @ {1f/CAPTURE_INTERVAL:F0} FPS, JPEG Q{JPEG_QUALITY})");
         }
         
         public void Update()
@@ -90,7 +88,6 @@ namespace Crawlspace2MP
             _lastCaptureTime = 0;
             
             SendSpectateStart();
-            Plugin.Log.LogInfo("[Spectate] Started sending frames");
         }
         
         /// <summary>
@@ -104,7 +101,6 @@ namespace Crawlspace2MP
             _captureCamera = null;
             
             SendSpectateStop();
-            Plugin.Log.LogInfo("[Spectate] Stopped sending frames");
         }
         
         /// <summary>
@@ -139,7 +135,6 @@ namespace Crawlspace2MP
             }
             
             _isReceiving = true;
-            Plugin.Log.LogInfo("[Spectate] Started receiving frames on TV");
         }
         
         /// <summary>
@@ -158,8 +153,6 @@ namespace Crawlspace2MP
             
             _tvPlayer = null;
             _tvRenderer = null;
-            
-            Plugin.Log.LogInfo("[Spectate] Stopped receiving, restored TV");
         }
         
         private void UpdateSender()
@@ -271,8 +264,6 @@ namespace Crawlspace2MP
         
         private void HandleSpectateStart()
         {
-            Plugin.Log.LogInfo("[Spectate] Partner started spectate stream");
-            
             string scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
             if (scene.Equals("Home", StringComparison.OrdinalIgnoreCase))
             {
@@ -282,7 +273,6 @@ namespace Crawlspace2MP
         
         private void HandleSpectateStop()
         {
-            Plugin.Log.LogInfo("[Spectate] Partner stopped spectate stream");
             StopReceiving();
         }
         
@@ -309,8 +299,6 @@ namespace Crawlspace2MP
                 UnityEngine.Object.Destroy(_receiveTex);
                 _receiveTex = null;
             }
-            
-            Plugin.Log.LogInfo("[Spectate] Cleaned up");
         }
     }
 }

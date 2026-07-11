@@ -23,7 +23,6 @@ namespace Crawlspace2MP
         public void Initialize(INetworkTransport steam)
         {
             _steam = steam;
-            Plugin.Log.LogInfo("[Voice] Voice chat initialized");
         }
         
         private void EnsureSteamReady()
@@ -120,7 +119,6 @@ namespace Crawlspace2MP
             vp.PeerId = peerId;
             vp.MinDistance = MinDistance;
             vp.MaxDistance = MaxDistance;
-            Plugin.Log.LogInfo($"[Voice] Created voice player for peer {peerId}");
             return vp;
         }
         

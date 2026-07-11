@@ -68,7 +68,6 @@ namespace Crawlspace2MP
             };
             _recordTimer = 0f;
             IsRecording = true;
-            Plugin.Log.LogInfo("[Actor] Recording started");
         }
 
         /// <summary>
@@ -82,11 +81,6 @@ namespace Crawlspace2MP
             if (_currentRecording.Frames.Count > 0)
             {
                 Recordings.Add(_currentRecording);
-                Plugin.Log.LogInfo($"[Actor] Recording saved: '{_currentRecording.Name}' ({_currentRecording.Frames.Count} frames, {_currentRecording.Frames.Count * RECORD_INTERVAL:F1}s)");
-            }
-            else
-            {
-                Plugin.Log.LogWarning("[Actor] Recording discarded (no frames)");
             }
             _currentRecording = null;
         }
@@ -205,7 +199,6 @@ namespace Crawlspace2MP
                 ApplyFrame(actor, recording.Frames[0]);
             }
 
-            Plugin.Log.LogInfo($"[Actor] Spawned: '{actor.Name}'");
             return actor;
         }
 
@@ -216,7 +209,6 @@ namespace Crawlspace2MP
         {
             actor.Visual?.Destroy();
             Actors.Remove(actor);
-            Plugin.Log.LogInfo($"[Actor] Removed: '{actor.Name}'");
         }
 
         /// <summary>
@@ -229,7 +221,6 @@ namespace Crawlspace2MP
                 Actors[i].Visual?.Destroy();
             }
             Actors.Clear();
-            Plugin.Log.LogInfo("[Actor] All actors removed");
         }
 
         /// <summary>
@@ -247,7 +238,6 @@ namespace Crawlspace2MP
                 }
             }
             Recordings.Remove(recording);
-            Plugin.Log.LogInfo($"[Actor] Deleted recording: '{recording.Name}'");
         }
 
         /// <summary>

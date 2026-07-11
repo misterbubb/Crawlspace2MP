@@ -1,6 +1,6 @@
 {
   "name": "Crawlspace2MP",
-  "version_number": "1.2.5",
+  "version_number": "1.2.6",
   "website_url": "https://github.com/misterbubb/Crawlspace2MP",
   "description": "Adds online multiplayer support to Crawlspace 2 using BepInEx.",
   "dependencies": [

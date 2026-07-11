@@ -335,13 +335,10 @@ namespace Crawlspace2MP
             
             // Listen for scene loads
             SceneManager.sceneLoaded += OnSceneLoaded;
-            
-            Plugin.Log.LogInfo("PlayerSync initialized (Steam)");
         }
         
         private void OnPeerConnected(int peerId)
         {
-            Plugin.Log.LogInfo($"Peer connected: {peerId}");
             _connectedPeerIds.Add(peerId);
             
             // Create remote player for this peer
@@ -349,7 +346,6 @@ namespace Crawlspace2MP
             {
                 var remote = new RemotePlayer(peerId);
                 _remotePlayers[peerId] = remote;
-                Plugin.Log.LogInfo($"Created remote player for peer {peerId}");
             }
             
             // Send our version to the new peer
@@ -362,7 +358,6 @@ namespace Crawlspace2MP
         
         private void OnPeerDisconnected(int peerId)
         {
-            Plugin.Log.LogInfo($"Peer disconnected: {peerId}");
             _connectedPeerIds.Remove(peerId);
             _peerVersions.Remove(peerId);
             _peerPings.Remove(peerId);
@@ -387,7 +382,6 @@ namespace Crawlspace2MP
                 string scene = SceneManager.GetActiveScene().name;
                 if (scene.Contains("Night") && !_pendingHomeLoad)
                 {
-                    Plugin.Log.LogInfo("[Ghost] All peers disconnected - scheduling Home load");
                     _pendingHomeLoad = true;
                     _pendingHomeLoadTimer = 1.0f;
                 }
@@ -556,8 +550,6 @@ namespace Crawlspace2MP
             string sceneName = reader.GetString();
             int nightSelected = reader.GetInt();
             
-            Plugin.Log.LogInfo($"Received scene change: {sceneName}, night={nightSelected}");
-            
             // If transitioning to Home from a Night, save night completion for ALL players
             string currentScene = SceneManager.GetActiveScene().name;
             if (sceneName.Equals("Home", System.StringComparison.OrdinalIgnoreCase) && currentScene.Contains("Night"))
@@ -566,7 +558,6 @@ namespace Crawlspace2MP
                 if (sceneLeaveObj != null)
                 {
                     sceneLeaveObj.loadSelectedNight();
-                    Plugin.Log.LogInfo($"[Sync] Saved night completion via loadSelectedNight()");
                 }
             }
             
@@ -575,7 +566,6 @@ namespace Crawlspace2MP
             if (_steam.IsHost && _localIsGhost)
             {
                 // Ghost host: client triggered exit, follow them
-                Plugin.Log.LogInfo($"[Ghost Host] Client triggered scene exit, loading: {sceneName}");
                 IsLoadingFromSync = true;
                 ResetGhostState();
                 SceneManager.LoadScene(sceneName);
@@ -583,7 +573,6 @@ namespace Crawlspace2MP
             else if (_steam.IsHost)
             {
                 // Alive host: client triggered exit
-                Plugin.Log.LogInfo($"[Host] Client triggered scene exit, loading: {sceneName}");
                 IsLoadingFromSync = true;
                 TriggerClientFade();
                 SceneManager.LoadScene(sceneName);
@@ -592,7 +581,6 @@ namespace Crawlspace2MP
             {
                 // Client: defer the scene load to Update so OnSceneLoaded fires properly
                 // Loading directly from a network callback can skip Unity's sceneLoaded event
-                Plugin.Log.LogInfo($"[Client] Deferring scene load: {sceneName}");
                 IsLoadingFromSync = true;
                 _lastScene = sceneName;
                 _pendingSceneLoad = sceneName;
@@ -604,7 +592,6 @@ namespace Crawlspace2MP
         private void HandleNightSelectedPacket(PacketReader reader)
         {
             int night = reader.GetInt();
-            Plugin.Log.LogInfo($"Received night selection: {night}");
             calenderControl.nightSelected = night;
             
             // Update the calendar visual on client side

@@ -101,8 +101,6 @@ namespace Crawlspace2MP
             Head.transform.position = Vector3.zero;
             LeftHand.transform.position = Vector3.zero;
             RightHand.transform.position = Vector3.zero;
-            
-            Plugin.Log.LogInfo($"Created remote player visual for peer {PeerId}");
         }
         
         private void SetupHandVisuals()
@@ -146,13 +144,11 @@ namespace Crawlspace2MP
                     LeftHand = CloneHandMesh(leftHandSource, $"RemotePlayer_{PeerId}_LeftHand");
                     RightHand = CloneHandMesh(rightHandSource, $"RemotePlayer_{PeerId}_RightHand");
                     _usingRealHands = true;
-                    Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Cloned hand models from: L={leftHandSource.name}, R={rightHandSource.name}");
                     TryFindHandAnimators();
                     return;
                 }
             }
             
-            Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Hand meshes not ready yet (L={leftHandSource != null}, R={rightHandSource != null}) - using fallback, will retry");
             CreateFallbackHands();
         }
         
@@ -354,10 +350,6 @@ namespace Crawlspace2MP
                 // Also explicitly disable all renderers to be safe
                 foreach (var renderer in LeftBattery.GetComponentsInChildren<Renderer>(true))
                     renderer.enabled = false;
-                foreach (var renderer in RightBattery.GetComponentsInChildren<Renderer>(true))
-                    renderer.enabled = false;
-                
-                Plugin.LogDebug($"[RemotePlayer {PeerId}] Cloned battery models");
             }
             else
             {
@@ -400,12 +392,6 @@ namespace Crawlspace2MP
             // Give up after max retries
             if (_handUpgradeRetryCount >= MAX_HAND_UPGRADE_RETRIES)
             {
-                // Log once when we give up
-                if (_handUpgradeRetryCount == MAX_HAND_UPGRADE_RETRIES)
-                {
-                    Plugin.Log.LogWarning($"[RemotePlayer {PeerId}] Hand upgrade failed after {MAX_HAND_UPGRADE_RETRIES} attempts - using fallback spheres");
-                    _handUpgradeRetryCount++; // Increment so we don't log again
-                }
                 return;
             }
             
@@ -414,12 +400,6 @@ namespace Crawlspace2MP
             
             _handUpgradeRetryTime = Time.time;
             _handUpgradeRetryCount++;
-            
-            // Log first attempt and every 10th attempt
-            if (_handUpgradeRetryCount == 1 || _handUpgradeRetryCount % 10 == 0)
-            {
-                Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Hand upgrade retry {_handUpgradeRetryCount}/{MAX_HAND_UPGRADE_RETRIES}");
-            }
             
             TryUpgradeHandVisuals();
         }
@@ -430,19 +410,11 @@ namespace Crawlspace2MP
             if (LeftHand != null && _leftHandAnimator == null)
             {
                 _leftHandAnimator = LeftHand.GetComponentInChildren<Animator>();
-                if (_leftHandAnimator != null)
-                {
-                    Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Found left hand Animator");
-                }
             }
             
             if (RightHand != null && _rightHandAnimator == null)
             {
                 _rightHandAnimator = RightHand.GetComponentInChildren<Animator>();
-                if (_rightHandAnimator != null)
-                {
-                    Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Found right hand Animator");
-                }
             }
             
             // Cache animator parameter hashes
@@ -450,7 +422,6 @@ namespace Crawlspace2MP
             {
                 _animParamFlex = Animator.StringToHash("Flex");
                 _animParamPinch = Animator.StringToHash("Pinch");
-                Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Cached animator parameters (Flex={_animParamFlex}, Pinch={_animParamPinch})");
             }
         }
         
@@ -556,8 +527,6 @@ namespace Crawlspace2MP
             if (!hasLeftRenderer || !hasRightRenderer)
                 return;
             
-            Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Upgrading placeholder hands to real models (L={leftHandSource.name}, R={rightHandSource.name})");
-            
             // Save current positions
             Vector3 leftPos = LeftHand.transform.position;
             Quaternion leftRot = LeftHand.transform.rotation;
@@ -587,7 +556,6 @@ namespace Crawlspace2MP
             if (RightBattery != null) RightBattery.transform.SetParent(RightHand.transform);
             
             _usingRealHands = true;
-            Plugin.Log.LogInfo($"[RemotePlayer {PeerId}] Hand visuals upgraded to real models");
             
             // Try to find animators on the new hands
             TryFindHandAnimators();
